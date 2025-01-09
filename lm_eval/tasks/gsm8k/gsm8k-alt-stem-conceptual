@@ -1,0 +1,53 @@
+dataset_name: main
+dataset_path: gsm8k
+doc_to_target: '{{answer.split("####")[-1].strip() if answer is defined else target}}'
+doc_to_text: "Given the following problem, reason and give a final answer to the problem.\nProblem: {{question}}\nYour response should end with \"The final answer is [answer]\" where [answer] is the response to the problem.\n"
+fewshot_config:
+  sampler: first_n
+  samples:
+  - question: A metal ball and a feather are dropped in a vacuum chamber. Which will hit the bottom first?
+    target: In a vacuum, there's no air resistance affecting either object. According to Newton's laws, all objects fall at the same rate regardless of mass when only gravity acts on them. The final answer is same time
+  - question: If you add salt to pure water, which will have a higher boiling point - the salt water or the pure water?
+    target: When you add salt to water, it creates a solution with dissolved ions. This increases the boiling point of the water through boiling point elevation. The final answer is salt water
+  - question: In a parallel circuit, if one light bulb burns out, what happens to the other light bulbs?
+    target: In a parallel circuit, each component has its own complete path to the power source. If one bulb burns out, the other paths remain complete and unaffected. The final answer is stay lit
+  - question: If you put an ice cube in a full glass of water and the ice cube melts, will the water overflow?
+    target: When floating, the ice displaces its weight in water. When it melts, it becomes water with exactly that volume. Since ice is less dense than water, the melted volume is actually less than the space it occupied while frozen. The final answer is no overflow
+  - question: During a lunar eclipse, what color does the Moon often appear?
+    target: During a lunar eclipse, Earth blocks direct sunlight from reaching the Moon. However, some light still reaches it after being filtered through Earth's atmosphere, which scatters blue light and lets red light pass through. The final answer is red
+  - question: When a bike is coasting downhill with no pedaling, which wheel turns faster - the front or back?
+    target: Both wheels are traveling the same distance in the same time, and they have the same diameter. Therefore they must complete the same number of rotations per minute. The final answer is same speed
+  - question: If you compress a spring and then release it, where will it stop - before, at, or past its original position?
+    target: According to Hooke's Law and conservation of energy, an ideal spring will oscillate back and forth through its original position. But due to friction and air resistance, it will eventually stop at its natural resting length. The final answer is original position
+  - question: A pendulum is swinging. If you double its string length, what happens to its period?
+    target: The period of a pendulum is proportional to the square root of its length. If you double the length, the period increases by a factor of √2. It will swing slower with a longer period. The final answer is longer period
+filter_list:
+- filter:
+  - function: regex
+    group_select: -1
+    regex_pattern: The final answer is (.+)
+  - function: take_first
+  name: strict-match
+generation_kwargs:
+  do_sample: false
+  until:
+  - '<|eot_id|>'
+  - '<|start_header_id|>user<|end_header_id|>'
+  - 'Q:'
+  - </s>
+  - <|im_end|>
+tag:
+- chain_of_thought
+metadata:
+  version: 3.0
+metric_list:
+- aggregation: mean
+  higher_is_better: true
+  ignore_case: true
+  ignore_punctuation: false
+  metric: exact_match
+num_fewshot: 8
+output_type: generate_until
+repeats: 1
+task: gsm8k_alt_stem_conceptual
+test_split: test
