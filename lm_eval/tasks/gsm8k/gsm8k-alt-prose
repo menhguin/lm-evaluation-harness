@@ -1,0 +1,58 @@
+dataset_name: main
+dataset_path: gsm8k
+doc_to_target: '{{answer.split("####")[-1].strip() if answer is defined else target}}'
+doc_to_text: "Given the following problem, reason and give a final answer to the problem as a number.\nProblem: {{question}}\nYour response should end with \"The final answer is [answer]\" where [answer] is the response to the problem.\n"
+fewshot_config:
+  sampler: first_n
+  samples:
+  - question: There are fifteen trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be twenty-one trees. How many trees did the grove workers plant today?
+    target: There are fifteen trees originally. Then there were twenty-one trees after some more were planted. So there must have been twenty-one minus fifteen equals six. The final answer is 6
+  - question: If there are three cars in the parking lot and two more cars arrive, how many cars are in the parking lot?
+    target: There are originally three cars. Two more cars arrive. Three plus two equals five. The final answer is 5
+  - question: Leah had thirty-two chocolates and her sister had forty-two. If they ate thirty-five, how many pieces do they have left in total?
+    target: Originally, Leah had thirty-two chocolates. Her sister had forty-two. So in total they had thirty-two plus forty-two equals seventy-four. After eating thirty-five, they had seventy-four minus thirty-five equals thirty-nine. The final answer is 39
+  - question: Jason had twenty lollipops. He gave Denny some lollipops. Now Jason has twelve lollipops. How many lollipops did Jason give to Denny?
+    target: Jason started with twenty lollipops. Then he had twelve after giving some to Denny. So he gave Denny twenty minus twelve equals eight. The final answer is 8
+  - question: Shawn has five toys. For Christmas, he got two toys each from his mom and dad. How many toys does he have now?
+    target: Shawn started with five toys. If he got two toys each from his mom and dad, then that is four more toys. Five plus four equals nine. The final answer is 9
+  - question: There were nine computers in the server room. Five more computers were installed each day, from monday to thursday. How many computers are now in the server room?
+    target: There were originally nine computers. For each of four days, five more computers were added. So five times four equals twenty computers were added. Nine plus twenty equals twenty-nine. The final answer is 29
+  - question: Michael had fifty-eight golf balls. On tuesday, he lost twenty-three golf balls. On wednesday, he lost two more. How many golf balls did he have at the end of wednesday?
+    target: Michael started with fifty-eight golf balls. After losing twenty-three on tuesday, he had fifty-eight minus twenty-three equals thirty-five. After losing two more, he had thirty-five minus two equals thirty-three golf balls. The final answer is 33
+  - question: Olivia has twenty-three dollars. She bought five bagels for three dollars each. How much money does she have left?
+    target: Olivia had twenty-three dollars. Five bagels for three dollars each will be five times three equals fifteen dollars. So she has twenty-three minus fifteen equals eight dollars left. The final answer is 8
+filter_list:
+- filter:
+  - function: regex
+    group_select: -1
+    regex_pattern: The final answer is ((-?[$0-9.,]{2,})|(-?[0-9]+))
+  - function: take_first
+  name: strict-match
+generation_kwargs:
+  do_sample: false
+  until:
+  - '<|eot_id|>'
+  - '<|start_header_id|>user<|end_header_id|>'
+  - 'Q:'
+  - </s>
+  - <|im_end|>
+tag:
+- chain_of_thought
+metadata:
+  version: 3.0
+metric_list:
+- aggregation: mean
+  higher_is_better: true
+  ignore_case: true
+  ignore_punctuation: false
+  metric: exact_match
+  regexes_to_ignore:
+  - ','
+  - \$
+  - '(?s).*#### '
+  - \.$
+num_fewshot: 8
+output_type: generate_until
+repeats: 1
+task: gsm8k_alt_prose
+test_split: test
