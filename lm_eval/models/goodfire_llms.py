@@ -183,3 +183,13 @@ class GoodfireLLM(LM):
 
         pbar.close()
         return res
+
+# Register the model
+def create_model(pretrained='meta-llama/Meta-Llama-3-8B-Instruct', **kwargs):
+    return GoodfireLLM(model=pretrained, **kwargs)
+
+if __name__ == "__main__":
+    from lm_eval import tasks, evaluator
+    from lm_eval.api.registry import register_model
+
+    register_model("goodfire_llms", create_model)
