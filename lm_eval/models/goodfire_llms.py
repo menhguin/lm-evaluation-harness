@@ -111,27 +111,33 @@ class GoodfireLLM(LM):
 
         for req in requests:
             context, gen_kwargs = req.args
+            
+            # Extract generation parameters from task config
             if isinstance(gen_kwargs, dict):
                 kwargs = gen_kwargs.copy()
+                # Get stop sequences from task config
                 until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
+                # Get other generation parameters
                 top_p = kwargs.pop("top_p", 1.0)
                 temperature = kwargs.pop("temperature", self.temperature)
+                do_sample = kwargs.pop("do_sample", True)
             else:
                 until = []
                 top_p = 1.0
                 temperature = self.temperature
+                do_sample = True
 
             # Log the first prompt for debugging
             if len(res) == 0:
-                print(f"\nFirst prompt: {context}\n")
+                eval_logger.debug(f"\nFirst prompt: {context}\n")
 
             try:
                 response = self.client.chat.completions.create(
                     messages=[{"role": "user", "content": context}],
                     model=self.model,
                     max_completion_tokens=self.max_completion_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
+                    temperature=temperature if do_sample else 0.0,
+                    top_p=top_p if do_sample else 1.0,
                 )
                 
                 # Extract content from ChatCompletion object
@@ -139,7 +145,7 @@ class GoodfireLLM(LM):
                 
                 # Log the first response for debugging
                 if len(res) == 0:
-                    print(f"\nFirst response: {output}\n")
+                    eval_logger.debug(f"\nFirst response: {output}\n")
                 
                 # Handle stop sequences if provided
                 if until:
@@ -150,11 +156,11 @@ class GoodfireLLM(LM):
                 res.append(output)
                 pbar.update(1)
             except Exception as e:
-                print(f"Error generating response: {str(e)}")
+                eval_logger.warning(f"Error generating response: {str(e)}")
                 # Print more details about the response for debugging
                 if len(res) == 0:
-                    print(f"Response type: {type(response)}")
-                    print(f"Response content: {response}")
+                    eval_logger.debug(f"Response type: {type(response)}")
+                    eval_logger.debug(f"Response content: {response}")
                 res.append("")  # Return empty string on error
                 pbar.update(1)
 
