@@ -134,14 +134,14 @@ class GoodfireLLM(LM):
                 # Get stop sequences from task config
                 until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
                 # Get other generation parameters
-                top_p = kwargs.pop("top_p", 1.0)
-                temperature = kwargs.pop("temperature", self.temperature)
                 do_sample = kwargs.pop("do_sample", True)
+                temperature = kwargs.pop("temperature", 1.0 if do_sample else 0.0)
+                top_p = kwargs.pop("top_p", 1.0)
             else:
                 until = []
-                top_p = 1.0
-                temperature = self.temperature
                 do_sample = True
+                temperature = self.temperature
+                top_p = 1.0
 
             # Log the first prompt for debugging
             if len(res) == 0:
@@ -152,8 +152,9 @@ class GoodfireLLM(LM):
                     messages=[{"role": "user", "content": context}],
                     model=self.model,
                     max_completion_tokens=self.max_completion_tokens,
-                    temperature=temperature if do_sample else 0.0,
-                    top_p=top_p if do_sample else 1.0,
+                    temperature=temperature,
+                    top_p=top_p,
+                    do_sample=do_sample
                 )
                 
                 # Extract content from ChatCompletion object
@@ -165,16 +166,18 @@ class GoodfireLLM(LM):
                 
                 # Handle stop sequences if provided
                 if until:
+                    # Try each stop sequence
                     for stop_seq in until:
                         if stop_seq in output:
                             output = output[:output.index(stop_seq)]
+                            break  # Stop at first matching sequence
 
                 res.append(output)
                 pbar.update(1)
             except Exception as e:
                 eval_logger.warning(f"Error generating response: {str(e)}")
                 # Print more details about the response for debugging
-                if len(res) == 0:
+                if 'response' in locals():
                     eval_logger.debug(f"Response type: {type(response)}")
                     eval_logger.debug(f"Response content: {response}")
                 res.append("")  # Return empty string on error
@@ -182,4 +185,4 @@ class GoodfireLLM(LM):
 
         pbar.close()
         return res
-``` 
+```

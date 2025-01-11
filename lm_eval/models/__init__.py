@@ -3,7 +3,7 @@ from . import (
     api_models,
     dummy,
     gguf,
-    goodfire_llms,
+    goodfire,
     hf_vlms,
     huggingface,
     ibm_watsonx_ai,
