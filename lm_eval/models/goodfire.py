@@ -25,16 +25,16 @@ def get_goodfire_api_key() -> str:
 
 def _debug_log_prompt(prompt: str, index: int) -> None:
     """Log a prompt for debugging."""
-    eval_logger.info(f"\n{'='*50}\nPROMPT #{index}:\n{'='*50}\n{prompt}\n{'='*50}\n")
+    eval_logger.info(f"\n{'='*50}\nPROMPT #{index + 1}:\n{'='*50}\n{prompt}\n{'='*50}\n")
 
 def _debug_log_response(response: str, index: int, expected: Optional[str] = None) -> None:
     """Log a response for debugging."""
-    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index}:\n{'='*50}\n{response}\n")
+    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index + 1}:\n{'='*50}\n{response}\n")
     eval_logger.info("="*50 + "\n")
 
 def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
     """Log processed output for debugging."""
-    eval_logger.info(f"\n{'='*50}\nPROCESSED #{index}:\n{'='*50}\n{processed}\n")
+    eval_logger.info(f"\n{'='*50}\nPROCESSED #{index + 1}:\n{'='*50}\n{processed}\n")
     if stop_seq:
         eval_logger.info(f"(Truncated at stop sequence: {stop_seq})\n{'='*50}\n")
     else:
@@ -81,7 +81,6 @@ class GoodfireLLM(LM):
         messages: List[Dict[str, str]], 
         temperature: float,
         top_p: float,
-        expected_answer: Optional[str] = None,
         idx: int = 0
     ) -> str:
         """Generate a single completion."""
@@ -91,7 +90,7 @@ class GoodfireLLM(LM):
                 # Add instruction to just return the letter choice
                 messages.append({
                     "role": "system",
-                    "content": "Respond with 'The answer is (X)' where X is your chosen letter A, B, C, or D."
+                    "content": "Please respond with just the letter choice (A), (B), (C), or (D)."
                 })
             
             response = self.client.chat.completions.create(
@@ -103,10 +102,23 @@ class GoodfireLLM(LM):
             )
             
             output = response.choices[0].message['content']
+            
+            # For GPQA, if the output is verbose, try to extract just the choice
+            if any("Choices:\n(A)" in msg["content"] for msg in messages):
+                # Look for (X) pattern
+                match = re.search(r"\(([A-D])\)", output)
+                if match:
+                    output = f"({match.group(1)})"
+                else:
+                    # Look for just the letter
+                    match = re.search(r"(?:^|\s)([A-D])(?:\s|$)", output)
+                    if match:
+                        output = f"({match.group(1)})"
+            
             _debug_log_response(output, idx)
             return output
         except Exception as e:
-            eval_logger.error(f"Error generating response #{idx}: {str(e)}")
+            eval_logger.error(f"Error generating response #{idx + 1}: {str(e)}")
             return ""
 
     def generate_until(
@@ -143,26 +155,25 @@ class GoodfireLLM(LM):
                     else:
                         messages = [{"role": "user", "content": context}]
 
-                    # Try to extract expected answer from examples
-                    expected_answer = None
-                    if isinstance(messages, list):
-                        for msg in reversed(messages):
-                            if msg["role"] == "assistant":
-                                expected_answer = _extract_answer(msg["content"])
-                                if expected_answer:
-                                    break
-
                     # Generate completion
                     output = self._generate_completion(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        expected_answer=expected_answer,
                         idx=idx
                     )
 
-                    # Process stop sequences
+                    # Process stop sequences - ensure we keep the complete problem
                     if until:
+                        # Find the last complete problem
+                        last_problem_idx = output.rfind("Problem:")
+                        if last_problem_idx >= 0:
+                            # Keep everything up to the next "Given the following problem"
+                            next_problem_idx = output.find("Given the following problem", last_problem_idx)
+                            if next_problem_idx >= 0:
+                                output = output[:next_problem_idx].strip()
+                        
+                        # Also check other stop sequences
                         for stop_seq in until:
                             if stop_seq in output:
                                 output = output[:output.index(stop_seq)]
