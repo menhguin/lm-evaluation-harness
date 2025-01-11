@@ -85,12 +85,12 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
-            # For GPQA, ensure we're just asking for the letter choice
+            # For GPQA, we want to follow the example format exactly
             if any("Choices:\n(A)" in msg["content"] for msg in messages):
-                # Add instruction to just return the letter choice
+                # Add instruction to follow example format
                 messages.append({
                     "role": "system",
-                    "content": "Please respond with just the letter choice (A), (B), (C), or (D)."
+                    "content": "Please respond with just the letter choice in parentheses, like '(A)' or '(B)' or '(C)' or '(D)'."
                 })
             
             response = self.client.chat.completions.create(
@@ -102,19 +102,6 @@ class GoodfireLLM(LM):
             )
             
             output = response.choices[0].message['content']
-            
-            # For GPQA, if the output is verbose, try to extract just the choice
-            if any("Choices:\n(A)" in msg["content"] for msg in messages):
-                # Look for (X) pattern
-                match = re.search(r"\(([A-D])\)", output)
-                if match:
-                    output = f"({match.group(1)})"
-                else:
-                    # Look for just the letter
-                    match = re.search(r"(?:^|\s)([A-D])(?:\s|$)", output)
-                    if match:
-                        output = f"({match.group(1)})"
-            
             _debug_log_response(output, idx)
             return output
         except Exception as e:
@@ -163,20 +150,11 @@ class GoodfireLLM(LM):
                         idx=idx
                     )
 
-                    # Process stop sequences - ensure we keep the complete problem
+                    # Process stop sequences
                     if until:
-                        # Find the last complete problem
-                        last_problem_idx = output.rfind("Problem:")
-                        if last_problem_idx >= 0:
-                            # Keep everything up to the next "Given the following problem"
-                            next_problem_idx = output.find("Given the following problem", last_problem_idx)
-                            if next_problem_idx >= 0:
-                                output = output[:next_problem_idx].strip()
-                        
-                        # Also check other stop sequences
                         for stop_seq in until:
                             if stop_seq in output:
-                                output = output[:output.index(stop_seq)]
+                                output = output[:output.index(stop_seq)].strip()
                                 _debug_log_processed(output, idx, stop_seq)
                                 break
                         else:
