@@ -196,7 +196,14 @@ class GoodfireLLM(LM):
         """Create an instance from an argument string."""
         args = utils.simple_parse_args_string(arg_string)
         pretrained = args.pop("pretrained", "meta-llama/Meta-Llama-3.1-8B-Instruct")
-        return cls(model=pretrained, **args)
+        
+        # Filter out irrelevant args for API-only implementation
+        api_relevant_args = {
+            k: v for k, v in args.items() 
+            if k in ["api_key", "max_completion_tokens", "temperature"]
+        }
+        
+        return cls(model=pretrained, **api_relevant_args)
 
     @property
     def max_length(self) -> int:
