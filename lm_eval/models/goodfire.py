@@ -188,7 +188,7 @@ class GoodfireLLM(LM):
     def create_from_arg_string(cls, arg_string, additional_config=None):
         """Create an instance from an argument string."""
         args = utils.simple_parse_args_string(arg_string)
-        pretrained = args.pop("pretrained", "meta-llama/Meta-Llama-3-8B-Instruct")
+        pretrained = args.pop("pretrained", "meta-llama/Meta-Llama-3.1-8B-Instruct")
         return cls(model=pretrained, **args)
 
     @property
