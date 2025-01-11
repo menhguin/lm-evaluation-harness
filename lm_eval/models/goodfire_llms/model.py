@@ -74,6 +74,15 @@ class GoodfireLLM(LM):
     def max_gen_toks(self) -> int:
         return self.max_completion_tokens
 
+    @property
+    def tokenizer_name(self) -> str:
+        """Return the name of the tokenizer to use for chat templates."""
+        # For Llama models, use the Llama tokenizer
+        if "llama" in self.model.lower():
+            return "meta-llama/Llama-2-7b-hf"
+        # Default to Llama tokenizer if unknown
+        return "meta-llama/Llama-2-7b-hf"
+
     def tok_encode(self, string: str) -> List[int]:
         # Placeholder for tokenization - actual token count not needed
         return [0] * (len(string) // 4)  # Rough estimate
