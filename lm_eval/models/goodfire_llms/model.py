@@ -182,12 +182,8 @@ class GoodfireLLM(LM):
                     top_p=top_p,
                 )
                 
-                # Handle response as dictionary
-                if isinstance(response, dict):
-                    output = response['choices'][0]['message']['content']
-                else:
-                    # Handle response as object
-                    output = response.choices[0].message.content
+                # Extract content from ChatCompletion object
+                output = response.choices[0].message['content']
                 
                 # Log the first response for debugging
                 if len(res) == 0:
