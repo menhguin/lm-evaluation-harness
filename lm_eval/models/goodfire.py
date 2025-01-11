@@ -4,14 +4,10 @@ import os
 
 try:
     import goodfire
-    from google.colab import userdata  # For Colab integration
 except ImportError as e:
-    if "google.colab" in str(e):
-        userdata = None  # Not running in Colab
-    else:
-        raise ModuleNotFoundError(
-            "Please install goodfire to use Goodfire models: pip install goodfire"
-        ) from e
+    raise ModuleNotFoundError(
+        "Please install goodfire to use Goodfire models: pip install goodfire"
+    ) from e
 
 from lm_eval import utils
 from lm_eval.api.model import LM
@@ -25,15 +21,8 @@ eval_logger = utils.eval_logger
 
 
 def get_goodfire_api_key() -> str:
-    """Get Goodfire API key from environment or Colab secrets."""
-    api_key = os.getenv('GOODFIRE_API_KEY')
-    if not api_key and userdata is not None:
-        # Try Colab secrets if available
-        api_key = userdata.get('GOODFIRE_API_KEY')
-        if api_key:
-            # Set in environment for future use
-            os.environ['GOODFIRE_API_KEY'] = api_key
-    return api_key
+    """Get Goodfire API key from environment."""
+    return os.getenv('GOODFIRE_API_KEY')
 
 
 @register_model("goodfire")
