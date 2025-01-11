@@ -95,6 +95,40 @@ class GoodfireLLM(LM):
     def loglikelihood_rolling(self, requests, **kwargs):
         raise NotImplementedError("GoodfireLLM does not support rolling loglikelihood.")
 
+    def format_results(self, results):
+        """Format results in a clean table format similar to VLLM output."""
+        output = []
+        
+        # Add model info
+        output.append(f"goodfire (model={self.model_str}), temperature={self.temperature}")
+        
+        # Header
+        output.append("|     Tasks     |Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|")
+        output.append("|---------------|------:|----------------|-----:|-----------|---|-----:|---|-----:|")
+        
+        # Results for each task
+        for task_name, task_results in results['results'].items():
+            version = results['versions'].get(task_name, '')
+            n_shot = results['n-shot'].get(task_name, 0)
+            
+            # Handle different metrics and filters
+            for key in task_results:
+                if ',' in str(key) and key != 'alias':
+                    metric, filter_name = key.split(',', 1)
+                    if not metric.endswith('_stderr'):
+                        value = task_results[key]
+                        stderr = task_results.get(f'{metric}_stderr,{filter_name}', 0)
+                        
+                        # Get higher_is_better info
+                        higher_is_better = results.get('higher_is_better', {}).get(task_name, {}).get(metric)
+                        arrow = "↑" if higher_is_better else "↓" if higher_is_better is False else " "
+                        
+                        output.append(
+                            f"|{task_name:<15}|{version:>6}|{filter_name:<14}|{n_shot:>5}|{metric:>10}|{arrow}  |{value:>5.4f}|±  |{stderr:>5.4f}|"
+                        )
+        
+        return "\n".join(output)
+
     def generate_until(self, requests, disable_tqdm=False) -> List[str]:
         """
         This is used for generation tasks. We'll call Goodfire's chat completions endpoint
@@ -108,6 +142,7 @@ class GoodfireLLM(LM):
             until = gen_args.get("until") or []
             max_gen_toks = gen_args.get("max_gen_toks", self.max_completion_tokens)
             temperature = gen_args.get("temperature", self.temperature)
+            top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
 
             messages = [{"role": "user", "content": prompt_str}]
             do_sample = gen_args.get("do_sample", True)
@@ -116,22 +151,30 @@ class GoodfireLLM(LM):
                 "model": self.model_str,
                 "max_completion_tokens": max_gen_toks,
                 "temperature": temperature,
+                "top_p": top_p,
                 "stream": False,
             }
 
-            completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
+            # Remove any None values to use API defaults
+            gf_kwargs = {k: v for k, v in gf_kwargs.items() if v is not None}
 
-            if not completion_response or not completion_response.choices:
-                output_text = ""
-            else:
-                output_text = completion_response.choices[0].message['content']
+            try:
+                completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
 
-            for stop_seq in until:
-                pos = output_text.find(stop_seq)
-                if pos != -1:
-                    output_text = output_text[:pos]
+                if not completion_response or not completion_response.choices:
+                    output_text = ""
+                else:
+                    output_text = completion_response.choices[0].message['content']
 
-            results.append(output_text)
-            self.cache_hook.add_partial("generate_until", request, output_text)
+                for stop_seq in until:
+                    pos = output_text.find(stop_seq)
+                    if pos != -1:
+                        output_text = output_text[:pos]
+
+                results.append(output_text)
+                self.cache_hook.add_partial("generate_until", request, output_text)
+            except Exception as e:
+                eval_logger.warning(f"Error in generate_until: {str(e)}")
+                results.append("")  # Return empty string on error
 
         return results
