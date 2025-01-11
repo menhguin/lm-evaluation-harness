@@ -182,11 +182,16 @@ class GoodfireLLM(LM):
                     top_p=top_p,
                 )
                 
+                # Handle response as dictionary
+                if isinstance(response, dict):
+                    output = response['choices'][0]['message']['content']
+                else:
+                    # Handle response as object
+                    output = response.choices[0].message.content
+                
                 # Log the first response for debugging
                 if len(res) == 0:
-                    print(f"\nFirst response: {response.choices[0].message.content}\n")
-
-                output = response.choices[0].message.content
+                    print(f"\nFirst response: {output}\n")
                 
                 # Handle stop sequences if provided
                 if until:
@@ -198,6 +203,10 @@ class GoodfireLLM(LM):
                 pbar.update(1)
             except Exception as e:
                 print(f"Error generating response: {str(e)}")
+                # Print more details about the response for debugging
+                if len(res) == 0:
+                    print(f"Response type: {type(response)}")
+                    print(f"Response content: {response}")
                 res.append("")  # Return empty string on error
                 pbar.update(1)
 
