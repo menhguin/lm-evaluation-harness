@@ -1,5 +1,5 @@
 import json
-from typing import Union, Dict, List, Optional
+from typing import Union, Dict, List, Optional, Any
 import asyncio
 import os
 
@@ -12,7 +12,9 @@ except ModuleNotFoundError as e:
 
 from lm_eval import utils
 from lm_eval.api.model import LM
-from lm_eval.models.openai_completions import LocalCompletionsAPI
+from lm_eval.api.instance import Instance
+from lm_eval.models.utils import handle_stop_sequences
+from tqdm import tqdm
 
 
 eval_logger = utils.eval_logger
@@ -30,11 +32,10 @@ class GoodfireLLM(LM):
 
     def __init__(
         self,
-        api_key: str = None,
-        model: str = None,
-        max_completion_tokens: int = 128,
-        temperature: float = 0.0,
-        **kwargs,
+        api_key: Optional[str] = None,
+        model: str = "meta-llama/Meta-Llama-3-8B-Instruct",
+        max_completion_tokens: int = 512,
+        temperature: float = 1.0,
     ):
         """
         Args:
@@ -42,22 +43,17 @@ class GoodfireLLM(LM):
           model: str. The Goodfire model or variant to use, e.g. "meta-llama/Meta-Llama-3-8B-Instruct".
           max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
           temperature: float for sampling temperature.
-          kwargs: Additional arguments to store or pass into gen_kwargs.
         """
         super().__init__()
-        self.api_key = api_key
-        self.model_str = model
+        self.api_key = api_key or os.getenv("GOODFIRE_API_KEY")
+        if not self.api_key:
+            raise ValueError("Goodfire API key is required but not found")
+        
+        self.client = goodfire.Client(api_key=self.api_key)
+        self.model = model
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
-        self.kwargs = kwargs
-        self._max_length = 4096
-
-        try:
-            self.client = goodfire.Client(api_key=self.api_key)
-        except Exception as e:
-            raise ValueError(
-                f"Could not initialize Goodfire client with api_key={api_key}. Error: {e}"
-            )
+        self._max_length = 4096  # Default max length for context + completion
 
     @property
     def max_length(self) -> int:
@@ -67,15 +63,13 @@ class GoodfireLLM(LM):
     def max_gen_toks(self) -> int:
         return self.max_completion_tokens
 
-    def tok_encode(self, string: str, **kwargs) -> List[str]:
-        """
-        For chat-based models, we don't rely on tokens for loglikelihood. 
-        Return the raw text as a single chunk. 
-        """
-        return [string]
+    def tok_encode(self, string: str) -> List[int]:
+        # Placeholder for tokenization - actual token count not needed
+        return [0] * (len(string) // 4)  # Rough estimate
 
-    def tok_decode(self, tokens: List[str], **kwargs) -> str:
-        return "".join(tokens)
+    def tok_decode(self, tokens: List[int]) -> str:
+        # Not needed for generation
+        return ""
 
     def _model_call(self, inps):
         """
@@ -89,11 +83,11 @@ class GoodfireLLM(LM):
         """
         raise NotImplementedError("GoodfireLLM does not use _model_generate in this integration.")
 
-    def loglikelihood(self, requests, **kwargs):
-        raise NotImplementedError("GoodfireLLM does not support loglikelihood yet.")
+    def loglikelihood(self, requests):
+        raise NotImplementedError("Loglikelihood not supported for Goodfire models")
 
-    def loglikelihood_rolling(self, requests, **kwargs):
-        raise NotImplementedError("GoodfireLLM does not support rolling loglikelihood.")
+    def loglikelihood_rolling(self, requests):
+        raise NotImplementedError("Loglikelihood_rolling not supported for Goodfire models")
 
     def format_results(self, results):
         """Format results in a clean table format similar to VLLM output."""
@@ -102,7 +96,7 @@ class GoodfireLLM(LM):
         # Add model info
         output.append(f"\nResults for Goodfire LLM Evaluation:")
         output.append("-" * 100)
-        output.append(f"Model: goodfire (model={self.model_str})")
+        output.append(f"Model: goodfire (model={self.model})")
         output.append(f"Temperature: {self.temperature}")
         output.append("-" * 100)
         
@@ -137,82 +131,55 @@ class GoodfireLLM(LM):
         eval_logger.info(formatted)
         return formatted
 
-    def generate_until(self, requests, disable_tqdm=False) -> List[str]:
-        """
-        This is used for generation tasks. We'll call Goodfire's chat completions endpoint
-        for each prompt individually and gather the results.
-        """
-        from tqdm import tqdm
+    def generate_until(
+        self, requests: List[Instance], disable_tqdm: bool = False
+    ) -> List[str]:
+        res = []
+        pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
 
-        eval_logger.info("\n=== Starting Generation ===")
-        results = []
-        for i, request in enumerate(tqdm(requests, disable=disable_tqdm)):
-            prompt_str, gen_args = request.args
-            until = gen_args.get("until") or []
-            max_gen_toks = gen_args.get("max_gen_toks", self.max_completion_tokens)
-            temperature = gen_args.get("temperature", self.temperature)
-            top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
+        for req in requests:
+            context, gen_kwargs = req.args
+            if isinstance(gen_kwargs, dict):
+                kwargs = gen_kwargs.copy()
+                until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
+                top_p = kwargs.pop("top_p", 1.0)
+                temperature = kwargs.pop("temperature", self.temperature)
+            else:
+                until = []
+                top_p = 1.0
+                temperature = self.temperature
 
-            # Add system message to enforce format and focus on final question
-            messages = [
-                {
-                    "role": "system", 
-                    "content": (
-                        "You are a helpful assistant that answers multiple choice questions. "
-                        "The prompt will contain several example questions and answers, followed by a final question to answer. "
-                        "ONLY answer the final question in the prompt. "
-                        "Previous questions are just examples to show the format. "
-                        "End your response with 'Answer: (X)' where X is one of the options (A, B, C, or D)."
-                    )
-                },
-                {"role": "user", "content": prompt_str}
-            ]
-
-            gf_kwargs = {
-                "model": self.model_str,
-                "max_completion_tokens": max_gen_toks,
-                "temperature": temperature,
-                "top_p": top_p,
-                "stream": False,
-            }
-
-            # Remove any None values to use API defaults
-            gf_kwargs = {k: v for k, v in gf_kwargs.items() if v is not None}
+            # Log the first prompt for debugging
+            if len(res) == 0:
+                print(f"\nFirst prompt: {context}\n")
 
             try:
-                eval_logger.info(f"\n--- Question {i+1} ---")
-                eval_logger.info(f"Prompt: {prompt_str[:200]}...")  # Show first 200 chars of prompt
+                response = self.client.chat.completions.create(
+                    messages=[{"role": "user", "content": context}],
+                    model=self.model,
+                    max_completion_tokens=self.max_completion_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
                 
-                completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
+                # Log the first response for debugging
+                if len(res) == 0:
+                    print(f"\nFirst response: {response.choices[0].message.content}\n")
 
-                if not completion_response or not completion_response.choices:
-                    output_text = ""
-                    eval_logger.warning("No response generated")
-                else:
-                    output_text = completion_response.choices[0].message['content']
-                    eval_logger.info(f"Response: {output_text}")
+                output = response.choices[0].message.content
+                
+                # Handle stop sequences if provided
+                if until:
+                    for stop_seq in until:
+                        if stop_seq in output:
+                            output = output[:output.index(stop_seq)]
 
-                # Check if response ends with Answer: (X)
-                if not any(output_text.strip().endswith(f"Answer: ({x})") for x in ['A', 'B', 'C', 'D']):
-                    eval_logger.warning("Response doesn't end with Answer: (X) format")
-                    # Try to extract answer from the response if it's there but not at the end
-                    for line in reversed(output_text.split('\n')):
-                        if line.startswith('Answer: (') and line[-1] == ')':
-                            output_text = line
-                            eval_logger.info("Found and extracted answer line")
-                            break
-
-                for stop_seq in until:
-                    pos = output_text.find(stop_seq)
-                    if pos != -1:
-                        output_text = output_text[:pos]
-                        eval_logger.info(f"Truncated at stop sequence: {stop_seq}")
-
-                results.append(output_text)
-                self.cache_hook.add_partial("generate_until", request, output_text)
+                res.append(output)
+                pbar.update(1)
             except Exception as e:
-                eval_logger.warning(f"Error in generate_until: {str(e)}")
-                results.append("")  # Return empty string on error
+                print(f"Error generating response: {str(e)}")
+                res.append("")  # Return empty string on error
+                pbar.update(1)
 
-        eval_logger.info("\n=== Generation Complete ===")
-        return results
+        pbar.close()
+        return res
