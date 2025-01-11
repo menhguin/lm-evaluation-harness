@@ -1,7 +1,6 @@
 import json
 import re
-import asyncio
-from typing import Union, Dict, List, Optional, Any
+from typing import Union, Dict, List, Optional
 import os
 
 try:
@@ -18,14 +17,11 @@ from lm_eval.models.utils import handle_stop_sequences
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
 
-
 eval_logger = utils.eval_logger
-
 
 def get_goodfire_api_key() -> str:
     """Get Goodfire API key from environment."""
     return os.getenv('GOODFIRE_API_KEY')
-
 
 def _extract_answer(text: str) -> Optional[str]:
     """Extract numerical answer from text."""
@@ -34,11 +30,9 @@ def _extract_answer(text: str) -> Optional[str]:
         return match.group(1)
     return None
 
-
 def _debug_log_prompt(prompt: str, index: int) -> None:
     """Log a prompt for debugging."""
     eval_logger.info(f"\n{'='*50}\nPROMPT #{index}:\n{'='*50}\n{prompt}\n{'='*50}\n")
-
 
 def _debug_log_response(response: str, index: int, expected: Optional[str] = None) -> None:
     """Log a response for debugging."""
@@ -50,7 +44,6 @@ def _debug_log_response(response: str, index: int, expected: Optional[str] = Non
         eval_logger.info(f"Correct: {expected == actual}")
     eval_logger.info("="*50 + "\n")
 
-
 def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
     """Log processed output for debugging."""
     eval_logger.info(f"\n{'='*50}\nPROCESSED #{index}:\n{'='*50}\n{processed}\n")
@@ -58,7 +51,6 @@ def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> No
         eval_logger.info(f"(Truncated at stop sequence: {stop_seq})\n{'='*50}\n")
     else:
         eval_logger.info(f"(No truncation)\n{'='*50}\n")
-
 
 @register_model("goodfire")
 class GoodfireLLM(LM):
@@ -77,7 +69,6 @@ class GoodfireLLM(LM):
         model: str = "meta-llama/Meta-Llama-3-8B-Instruct",
         max_completion_tokens: int = 512,
         temperature: float = 1.0,
-        batch_size: int = 4,  # Number of concurrent requests
     ):
         """
         Args:
@@ -85,21 +76,19 @@ class GoodfireLLM(LM):
             model: str. The Goodfire model to use, e.g. "meta-llama/Meta-Llama-3-8B-Instruct".
             max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
             temperature: float. Sampling temperature.
-            batch_size: int. Number of concurrent API requests.
         """
         super().__init__()
         self.api_key = api_key or get_goodfire_api_key()
         if not self.api_key:
-            raise ValueError("Goodfire API key is required but not found. Please set GOODFIRE_API_KEY in environment or Colab secrets.")
+            raise ValueError("Goodfire API key is required but not found. Please set GOODFIRE_API_KEY in environment.")
         
         self.client = goodfire.Client(api_key=self.api_key)
         self.model = model
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
-        self.batch_size = batch_size
         self._max_length = 4096  # Default max length for context + completion
 
-    async def _generate_completion(
+    def _generate_completion(
         self, 
         messages: List[Dict[str, str]], 
         temperature: float,
@@ -107,9 +96,9 @@ class GoodfireLLM(LM):
         expected_answer: Optional[str] = None,
         idx: int = 0
     ) -> str:
-        """Generate a single completion asynchronously."""
+        """Generate a single completion."""
         try:
-            response = await self.client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 messages=messages,
                 model=self.model,
                 max_completion_tokens=self.max_completion_tokens,
@@ -130,9 +119,9 @@ class GoodfireLLM(LM):
         """Generate responses for a list of requests."""
         self._is_generating = True
         try:
-            async def process_batch(batch_requests):
-                tasks = []
-                for idx, req in enumerate(batch_requests):
+            results = []
+            with tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests") as pbar:
+                for idx, req in enumerate(requests):
                     context, gen_kwargs = req.args
                     
                     # Extract generation parameters
@@ -167,22 +156,16 @@ class GoodfireLLM(LM):
                                 if expected_answer:
                                     break
 
-                    # Create task
-                    task = self._generate_completion(
+                    # Generate completion
+                    output = self._generate_completion(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
                         expected_answer=expected_answer,
                         idx=idx
                     )
-                    tasks.append(task)
 
-                # Run batch of tasks
-                outputs = await asyncio.gather(*tasks)
-                
-                # Process stop sequences
-                processed_outputs = []
-                for idx, output in enumerate(outputs):
+                    # Process stop sequences
                     if until:
                         for stop_seq in until:
                             if stop_seq in output:
@@ -193,22 +176,13 @@ class GoodfireLLM(LM):
                             _debug_log_processed(output, idx)
                     else:
                         _debug_log_processed(output, idx)
-                    processed_outputs.append(output)
-                
-                return processed_outputs
 
-            # Process all requests in batches
-            results = []
-            with tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests") as pbar:
-                for i in range(0, len(requests), self.batch_size):
-                    batch = requests[i:i + self.batch_size]
-                    batch_results = asyncio.run(process_batch(batch))
-                    results.extend(batch_results)
-                    pbar.update(len(batch))
+                    results.append(output)
+                    pbar.update(1)
 
             return results
         finally:
-            self._is_generating = False 
+            self._is_generating = False
 
     @classmethod
     def create_from_arg_string(cls, arg_string, additional_config=None):
