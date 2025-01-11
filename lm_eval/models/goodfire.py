@@ -101,7 +101,7 @@ class GoodfireLLM(LM):
                     "content": "Please respond with just the letter choice in parentheses, like '(A)' or '(B)' or '(C)' or '(D)'."
                 })
             
-            # EXPERIMENTAL: Add inspect to API call if requested
+            # EXPERIMENTAL: Create API params without inspect
             api_params = {
                 "messages": messages,
                 "model": self.model,
@@ -109,15 +109,17 @@ class GoodfireLLM(LM):
                 "temperature": temperature,
                 "top_p": top_p
             }
-            if inspect:
-                api_params["inspect"] = True
             
-            response = self.client.chat.completions.create(**api_params)
+            # EXPERIMENTAL: Use client.inspect if available
+            if inspect and hasattr(self.client, 'inspect'):
+                response = self.client.inspect.chat.completions.create(**api_params)
+            else:
+                response = self.client.chat.completions.create(**api_params)
             
             output = response.choices[0].message['content']
             _debug_log_response(output, idx)
             
-            # EXPERIMENTAL: Log inspection features if available and requested
+            # EXPERIMENTAL: Log inspection features if available
             if inspect and hasattr(response, 'inspect') and response.inspect:
                 _debug_log_inspect(response.inspect.features, idx)
             
