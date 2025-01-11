@@ -126,12 +126,12 @@ class GoodfireLLM(LocalCompletionsAPI):
             # Retrieve completion
             completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
 
-            # Goodfire returns an object shaped like OpenAI so we can parse:
-            if not completion_response or not getattr(completion_response, "choices", None):
+            # Goodfire returns a dictionary, not an object:
+            if not completion_response or 'choices' not in completion_response:
                 # Some fallback blank
                 output_text = ""
             else:
-                output_text = completion_response.choices[0].message.content
+                output_text = completion_response['choices'][0]['message']['content']
 
             # If we have stop sequences in 'until', we'll apply them:
             for stop_seq in until:
