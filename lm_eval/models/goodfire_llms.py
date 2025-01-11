@@ -94,6 +94,35 @@ class GoodfireLLM(LM):
     def loglikelihood_rolling(self, requests, **kwargs):
         raise NotImplementedError("GoodfireLLM does not support rolling loglikelihood.")
 
+    def format_results(self, results, tasks):
+        """Format results in a clean table format similar to VLLM."""
+        output = []
+        
+        # Add model info
+        output.append(f"goodfire (model={self.model_str}), temperature={self.temperature}")
+        
+        # Header
+        output.append("|     Tasks     |Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|")
+        output.append("|---------------|------:|----------------|-----:|-----------|---|-----:|---|-----:|")
+        
+        # Results for each task
+        for task_name, task_results in results['results'].items():
+            version = results['versions'].get(task_name, '')
+            n_shot = results['n-shot'].get(task_name, 0)
+            
+            # Handle different metrics and filters
+            for key in task_results:
+                if key.startswith('exact_match,'):
+                    filter_name = key.split(',')[1]
+                    value = task_results[key]
+                    stderr = task_results.get(f'exact_match_stderr,{filter_name}', 0)
+                    
+                    output.append(
+                        f"|{task_name:<15}|{version:>6}|{filter_name:<14}|{n_shot:>5}|exact_match|↑  |{value:>5.4f}|±  |{stderr:>5.4f}|"
+                    )
+        
+        return "\n".join(output)
+
     def generate_until(self, requests, disable_tqdm=False) -> List[str]:
         """
         This is used for generation tasks. We'll call Goodfire's chat completions endpoint
@@ -133,4 +162,8 @@ class GoodfireLLM(LM):
             results.append(output_text)
             self.cache_hook.add_partial("generate_until", request, output_text)
 
+        # If this was called through evaluate(), format the results
+        if hasattr(self, '_current_task_list'):
+            return self.format_results(results, self._current_task_list)
+            
         return results 
