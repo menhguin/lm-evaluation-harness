@@ -126,7 +126,7 @@ class GoodfireLLM(LM):
 
     def apply_chat_template(
         self, messages: List[Dict[str, str]], system_message: str = None
-    ) -> str:
+    ) -> Union[str, List[Dict[str, str]]]:
         """Apply chat template to format messages for the model.
         
         Args:
@@ -134,7 +134,7 @@ class GoodfireLLM(LM):
             system_message: Optional system message to prepend
         
         Returns:
-            Formatted chat string
+            Either a string representation for hashing or the formatted messages for the API
         """
         formatted_messages = []
         
@@ -148,85 +148,95 @@ class GoodfireLLM(LM):
         # Add all other messages
         formatted_messages.extend(messages)
         
-        # Return raw messages - the chat completion API will handle formatting
-        return formatted_messages
+        # For generate_until, return the messages list
+        if hasattr(self, '_is_generating') and self._is_generating:
+            return formatted_messages
+            
+        # For hashing and other purposes, return a string representation
+        return json.dumps(formatted_messages, sort_keys=True)
 
     def generate_until(
         self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[str]:
         """Generate responses for a list of requests."""
-        res = []
-        pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
+        # Set flag to indicate we're in generation mode
+        self._is_generating = True
+        try:
+            res = []
+            pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
 
-        for idx, req in enumerate(requests):
-            context, gen_kwargs = req.args
-            
-            # Extract generation parameters from task config
-            if isinstance(gen_kwargs, dict):
-                kwargs = gen_kwargs.copy()
-                # Get stop sequences from task config
-                until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
-                # Get other generation parameters
-                do_sample = kwargs.pop("do_sample", True)
-                # If do_sample is False, set temperature to 0 for deterministic output
-                temperature = kwargs.pop("temperature", self.temperature)
-                if not do_sample:
-                    temperature = 0.0
-                top_p = kwargs.pop("top_p", 1.0)
-            else:
-                until = []
-                temperature = self.temperature
-                top_p = 1.0
-
-            # Log prompt for debugging
-            _debug_log_prompt(context, idx)
-
-            try:
-                # If context is already a list of messages, use it directly
-                if isinstance(context, list) and all(isinstance(m, dict) for m in context):
-                    messages = context
+            for idx, req in enumerate(requests):
+                context, gen_kwargs = req.args
+                
+                # Extract generation parameters from task config
+                if isinstance(gen_kwargs, dict):
+                    kwargs = gen_kwargs.copy()
+                    # Get stop sequences from task config
+                    until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
+                    # Get other generation parameters
+                    do_sample = kwargs.pop("do_sample", True)
+                    # If do_sample is False, set temperature to 0 for deterministic output
+                    temperature = kwargs.pop("temperature", self.temperature)
+                    if not do_sample:
+                        temperature = 0.0
+                    top_p = kwargs.pop("top_p", 1.0)
                 else:
-                    # Otherwise treat as a single user message
-                    messages = [{"role": "user", "content": context}]
+                    until = []
+                    temperature = self.temperature
+                    top_p = 1.0
 
-                response = self.client.chat.completions.create(
-                    messages=messages,
-                    model=self.model,
-                    max_completion_tokens=self.max_completion_tokens,
-                    temperature=temperature,
-                    top_p=top_p
-                )
-                
-                # Extract content from ChatCompletion object
-                output = response.choices[0].message['content']
-                
-                # Log raw response for debugging
-                _debug_log_response(output, idx)
-                
-                # Handle stop sequences if provided
-                if until:
-                    # Try each stop sequence
-                    for stop_seq in until:
-                        if stop_seq in output:
-                            original_len = len(output)
-                            output = output[:output.index(stop_seq)]
-                            if len(output) < original_len:
-                                _debug_log_processed(output, idx, stop_seq)
-                                break
+                # Log prompt for debugging
+                _debug_log_prompt(str(context), idx)
+
+                try:
+                    # If context is already a list of messages, use it directly
+                    if isinstance(context, list) and all(isinstance(m, dict) for m in context):
+                        messages = context
+                    else:
+                        # Otherwise treat as a single user message
+                        messages = [{"role": "user", "content": context}]
+
+                    response = self.client.chat.completions.create(
+                        messages=messages,
+                        model=self.model,
+                        max_completion_tokens=self.max_completion_tokens,
+                        temperature=temperature,
+                        top_p=top_p
+                    )
+                    
+                    # Extract content from ChatCompletion object
+                    output = response.choices[0].message['content']
+                    
+                    # Log raw response for debugging
+                    _debug_log_response(output, idx)
+                    
+                    # Handle stop sequences if provided
+                    if until:
+                        # Try each stop sequence
+                        for stop_seq in until:
+                            if stop_seq in output:
+                                original_len = len(output)
+                                output = output[:output.index(stop_seq)]
+                                if len(output) < original_len:
+                                    _debug_log_processed(output, idx, stop_seq)
+                                    break
+                        else:
+                            _debug_log_processed(output, idx)
                     else:
                         _debug_log_processed(output, idx)
-                else:
-                    _debug_log_processed(output, idx)
 
-                res.append(output)
-                pbar.update(1)
-            except Exception as e:
-                eval_logger.error(f"Error generating response #{idx}: {str(e)}")
-                if 'response' in locals():
-                    eval_logger.error(f"Response type: {type(response)}")
-                    eval_logger.error(f"Response content: {response}")
-                res.append("")  # Return empty string on error
-                pbar.update(1)
+                    res.append(output)
+                    pbar.update(1)
+                except Exception as e:
+                    eval_logger.error(f"Error generating response #{idx}: {str(e)}")
+                    if 'response' in locals():
+                        eval_logger.error(f"Response type: {type(response)}")
+                        eval_logger.error(f"Response content: {response}")
+                    res.append("")  # Return empty string on error
+                    pbar.update(1)
 
-        pbar.close()
-        return res 
+            pbar.close()
+            return res
+        finally:
+            # Always reset the generation flag
+            self._is_generating = False 
