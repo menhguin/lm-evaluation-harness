@@ -88,7 +88,8 @@ class GoodfireLLM(LM):
         messages: List[Dict[str, str]], 
         temperature: float,
         top_p: float,
-        idx: int = 0
+        idx: int = 0,
+        inspect: bool = False  # EXPERIMENTAL: Optional inspect parameter
     ) -> str:
         """Generate a single completion."""
         try:
@@ -100,20 +101,24 @@ class GoodfireLLM(LM):
                     "content": "Please respond with just the letter choice in parentheses, like '(A)' or '(B)' or '(C)' or '(D)'."
                 })
             
-            response = self.client.chat.completions.create(
-                messages=messages,
-                model=self.model,
-                max_completion_tokens=self.max_completion_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                inspect=True  # Enable inspection
-            )
+            # EXPERIMENTAL: Add inspect to API call if requested
+            api_params = {
+                "messages": messages,
+                "model": self.model,
+                "max_completion_tokens": self.max_completion_tokens,
+                "temperature": temperature,
+                "top_p": top_p
+            }
+            if inspect:
+                api_params["inspect"] = True
+            
+            response = self.client.chat.completions.create(**api_params)
             
             output = response.choices[0].message['content']
             _debug_log_response(output, idx)
             
-            # Log inspection features if available
-            if hasattr(response, 'inspect') and response.inspect:
+            # EXPERIMENTAL: Log inspection features if available and requested
+            if inspect and hasattr(response, 'inspect') and response.inspect:
                 _debug_log_inspect(response.inspect.features, idx)
             
             return output
@@ -141,10 +146,13 @@ class GoodfireLLM(LM):
                         if not do_sample:
                             temperature = 0.0
                         top_p = kwargs.pop("top_p", 1.0)
+                        # EXPERIMENTAL: Extract inspect parameter from gen_kwargs
+                        inspect = kwargs.pop("inspect", False)
                     else:
                         until = []
                         temperature = self.temperature
                         top_p = 1.0
+                        inspect = False  # Default to False if no gen_kwargs
 
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
@@ -160,7 +168,8 @@ class GoodfireLLM(LM):
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        idx=idx
+                        idx=idx,
+                        inspect=inspect  # Pass inspect parameter to completion
                     )
 
                     # Process stop sequences
