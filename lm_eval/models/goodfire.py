@@ -124,11 +124,13 @@ class GoodfireLLM(LM):
                 until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
                 # Get other generation parameters
                 do_sample = kwargs.pop("do_sample", True)
-                temperature = kwargs.pop("temperature", 1.0 if do_sample else 0.0)
+                # If do_sample is False, set temperature to 0 for deterministic output
+                temperature = kwargs.pop("temperature", self.temperature)
+                if not do_sample:
+                    temperature = 0.0
                 top_p = kwargs.pop("top_p", 1.0)
             else:
                 until = []
-                do_sample = True
                 temperature = self.temperature
                 top_p = 1.0
 
@@ -142,8 +144,7 @@ class GoodfireLLM(LM):
                     model=self.model,
                     max_completion_tokens=self.max_completion_tokens,
                     temperature=temperature,
-                    top_p=top_p,
-                    do_sample=do_sample
+                    top_p=top_p
                 )
                 
                 # Extract content from ChatCompletion object
