@@ -1,4 +1,6 @@
 import json
+import re
+import asyncio
 from typing import Union, Dict, List, Optional, Any
 import os
 
@@ -25,13 +27,29 @@ def get_goodfire_api_key() -> str:
     return os.getenv('GOODFIRE_API_KEY')
 
 
+def _extract_answer(text: str) -> Optional[str]:
+    """Extract numerical answer from text."""
+    match = re.search(r"The final answer is (\d+)", text)
+    if match:
+        return match.group(1)
+    return None
+
+
 def _debug_log_prompt(prompt: str, index: int) -> None:
     """Log a prompt for debugging."""
     eval_logger.info(f"\n{'='*50}\nPROMPT #{index}:\n{'='*50}\n{prompt}\n{'='*50}\n")
 
-def _debug_log_response(response: str, index: int) -> None:
+
+def _debug_log_response(response: str, index: int, expected: Optional[str] = None) -> None:
     """Log a response for debugging."""
-    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index}:\n{'='*50}\n{response}\n{'='*50}\n")
+    actual = _extract_answer(response)
+    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index}:\n{'='*50}\n{response}\n")
+    if expected is not None:
+        eval_logger.info(f"Expected answer: {expected}")
+        eval_logger.info(f"Actual answer: {actual}")
+        eval_logger.info(f"Correct: {expected == actual}")
+    eval_logger.info("="*50 + "\n")
+
 
 def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
     """Log processed output for debugging."""
@@ -59,6 +77,7 @@ class GoodfireLLM(LM):
         model: str = "meta-llama/Meta-Llama-3-8B-Instruct",
         max_completion_tokens: int = 512,
         temperature: float = 1.0,
+        batch_size: int = 4,  # Number of concurrent requests
     ):
         """
         Args:
@@ -66,6 +85,7 @@ class GoodfireLLM(LM):
             model: str. The Goodfire model to use, e.g. "meta-llama/Meta-Llama-3-8B-Instruct".
             max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
             temperature: float. Sampling temperature.
+            batch_size: int. Number of concurrent API requests.
         """
         super().__init__()
         self.api_key = api_key or get_goodfire_api_key()
@@ -76,7 +96,119 @@ class GoodfireLLM(LM):
         self.model = model
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
+        self.batch_size = batch_size
         self._max_length = 4096  # Default max length for context + completion
+
+    async def _generate_completion(
+        self, 
+        messages: List[Dict[str, str]], 
+        temperature: float,
+        top_p: float,
+        expected_answer: Optional[str] = None,
+        idx: int = 0
+    ) -> str:
+        """Generate a single completion asynchronously."""
+        try:
+            response = await self.client.chat.completions.create(
+                messages=messages,
+                model=self.model,
+                max_completion_tokens=self.max_completion_tokens,
+                temperature=temperature,
+                top_p=top_p
+            )
+            
+            output = response.choices[0].message['content']
+            _debug_log_response(output, idx, expected_answer)
+            return output
+        except Exception as e:
+            eval_logger.error(f"Error generating response #{idx}: {str(e)}")
+            return ""
+
+    def generate_until(
+        self, requests: List[Instance], disable_tqdm: bool = False
+    ) -> List[str]:
+        """Generate responses for a list of requests."""
+        self._is_generating = True
+        try:
+            async def process_batch(batch_requests):
+                tasks = []
+                for idx, req in enumerate(batch_requests):
+                    context, gen_kwargs = req.args
+                    
+                    # Extract generation parameters
+                    if isinstance(gen_kwargs, dict):
+                        kwargs = gen_kwargs.copy()
+                        until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
+                        do_sample = kwargs.pop("do_sample", True)
+                        temperature = kwargs.pop("temperature", self.temperature)
+                        if not do_sample:
+                            temperature = 0.0
+                        top_p = kwargs.pop("top_p", 1.0)
+                    else:
+                        until = []
+                        temperature = self.temperature
+                        top_p = 1.0
+
+                    # Log prompt
+                    _debug_log_prompt(str(context), idx)
+
+                    # Prepare messages
+                    if isinstance(context, list) and all(isinstance(m, dict) for m in context):
+                        messages = context
+                    else:
+                        messages = [{"role": "user", "content": context}]
+
+                    # Try to extract expected answer from examples
+                    expected_answer = None
+                    if isinstance(messages, list):
+                        for msg in reversed(messages):
+                            if msg["role"] == "assistant":
+                                expected_answer = _extract_answer(msg["content"])
+                                if expected_answer:
+                                    break
+
+                    # Create task
+                    task = self._generate_completion(
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        expected_answer=expected_answer,
+                        idx=idx
+                    )
+                    tasks.append(task)
+
+                # Run batch of tasks
+                outputs = await asyncio.gather(*tasks)
+                
+                # Process stop sequences
+                processed_outputs = []
+                for idx, output in enumerate(outputs):
+                    if until:
+                        for stop_seq in until:
+                            if stop_seq in output:
+                                output = output[:output.index(stop_seq)]
+                                _debug_log_processed(output, idx, stop_seq)
+                                break
+                        else:
+                            _debug_log_processed(output, idx)
+                    else:
+                        _debug_log_processed(output, idx)
+                    processed_outputs.append(output)
+                
+                return processed_outputs
+
+            # Process all requests in batches
+            results = []
+            with tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests") as pbar:
+                for i in range(0, len(requests), self.batch_size):
+                    batch = requests[i:i + self.batch_size]
+                    batch_results = asyncio.run(process_batch(batch))
+                    results.extend(batch_results)
+                    pbar.update(len(batch))
+
+            return results
+        finally:
+            self._is_generating = False 
 
     @classmethod
     def create_from_arg_string(cls, arg_string, additional_config=None):
@@ -153,90 +285,4 @@ class GoodfireLLM(LM):
             return formatted_messages
             
         # For hashing and other purposes, return a string representation
-        return json.dumps(formatted_messages, sort_keys=True)
-
-    def generate_until(
-        self, requests: List[Instance], disable_tqdm: bool = False
-    ) -> List[str]:
-        """Generate responses for a list of requests."""
-        # Set flag to indicate we're in generation mode
-        self._is_generating = True
-        try:
-            res = []
-            pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
-
-            for idx, req in enumerate(requests):
-                context, gen_kwargs = req.args
-                
-                # Extract generation parameters from task config
-                if isinstance(gen_kwargs, dict):
-                    kwargs = gen_kwargs.copy()
-                    # Get stop sequences from task config
-                    until = handle_stop_sequences(kwargs.pop("until", []), eos=None)
-                    # Get other generation parameters
-                    do_sample = kwargs.pop("do_sample", True)
-                    # If do_sample is False, set temperature to 0 for deterministic output
-                    temperature = kwargs.pop("temperature", self.temperature)
-                    if not do_sample:
-                        temperature = 0.0
-                    top_p = kwargs.pop("top_p", 1.0)
-                else:
-                    until = []
-                    temperature = self.temperature
-                    top_p = 1.0
-
-                # Log prompt for debugging
-                _debug_log_prompt(str(context), idx)
-
-                try:
-                    # If context is already a list of messages, use it directly
-                    if isinstance(context, list) and all(isinstance(m, dict) for m in context):
-                        messages = context
-                    else:
-                        # Otherwise treat as a single user message
-                        messages = [{"role": "user", "content": context}]
-
-                    response = self.client.chat.completions.create(
-                        messages=messages,
-                        model=self.model,
-                        max_completion_tokens=self.max_completion_tokens,
-                        temperature=temperature,
-                        top_p=top_p
-                    )
-                    
-                    # Extract content from ChatCompletion object
-                    output = response.choices[0].message['content']
-                    
-                    # Log raw response for debugging
-                    _debug_log_response(output, idx)
-                    
-                    # Handle stop sequences if provided
-                    if until:
-                        # Try each stop sequence
-                        for stop_seq in until:
-                            if stop_seq in output:
-                                original_len = len(output)
-                                output = output[:output.index(stop_seq)]
-                                if len(output) < original_len:
-                                    _debug_log_processed(output, idx, stop_seq)
-                                    break
-                        else:
-                            _debug_log_processed(output, idx)
-                    else:
-                        _debug_log_processed(output, idx)
-
-                    res.append(output)
-                    pbar.update(1)
-                except Exception as e:
-                    eval_logger.error(f"Error generating response #{idx}: {str(e)}")
-                    if 'response' in locals():
-                        eval_logger.error(f"Response type: {type(response)}")
-                        eval_logger.error(f"Response content: {response}")
-                    res.append("")  # Return empty string on error
-                    pbar.update(1)
-
-            pbar.close()
-            return res
-        finally:
-            # Always reset the generation flag
-            self._is_generating = False 
+        return json.dumps(formatted_messages, sort_keys=True) 
