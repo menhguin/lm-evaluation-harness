@@ -40,6 +40,13 @@ def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> No
     else:
         eval_logger.info(f"(No truncation)\n{'='*50}\n")
 
+def _debug_log_inspect(features: List[Dict], index: int) -> None:
+    """Log inspection features for debugging."""
+    eval_logger.info(f"\n{'='*50}\nINSPECT #{index + 1}:\n{'='*50}")
+    for feature in features[:10]:  # Top 10 features by default
+        eval_logger.info(f"Feature: {feature['name']}, Score: {feature['score']:.3f}")
+    eval_logger.info("="*50 + "\n")
+
 @register_model("goodfire")
 class GoodfireLLM(LM):
     """
@@ -98,11 +105,17 @@ class GoodfireLLM(LM):
                 model=self.model,
                 max_completion_tokens=self.max_completion_tokens,
                 temperature=temperature,
-                top_p=top_p
+                top_p=top_p,
+                inspect=True  # Enable inspection
             )
             
             output = response.choices[0].message['content']
             _debug_log_response(output, idx)
+            
+            # Log inspection features if available
+            if hasattr(response, 'inspect') and response.inspect:
+                _debug_log_inspect(response.inspect.features, idx)
+            
             return output
         except Exception as e:
             eval_logger.error(f"Error generating response #{idx + 1}: {str(e)}")
