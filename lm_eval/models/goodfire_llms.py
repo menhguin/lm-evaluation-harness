@@ -1,13 +1,12 @@
 import json
 from typing import Union, Dict, List, Optional, Any
-import asyncio
 import os
 
 try:
     import goodfire
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
-        "Please install goodfire to use the GoodfireLLM: pip install goodfire"
+        "Please install goodfire to use Goodfire models: pip install goodfire"
     ) from e
 
 from lm_eval import utils
@@ -21,9 +20,10 @@ from tqdm import tqdm
 eval_logger = utils.eval_logger
 
 
+@register_model("goodfire")
 class GoodfireLLM(LM):
     """
-    Integration of Goodfire's 'OpenAI-plus' chat API with the EleutherAI lm-eval-harness.
+    Integration of Goodfire's chat API with the EleutherAI lm-eval-harness.
     This class uses the Goodfire client for completions.
 
     Limitations:
@@ -40,10 +40,10 @@ class GoodfireLLM(LM):
     ):
         """
         Args:
-          api_key: str. Your Goodfire API key. If not provided, tries environment or user-provided secrets.
-          model: str. The Goodfire model or variant to use, e.g. "meta-llama/Meta-Llama-3-8B-Instruct".
-          max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
-          temperature: float for sampling temperature.
+            api_key: str. Your Goodfire API key. If not provided, tries environment variable.
+            model: str. The Goodfire model to use, e.g. "meta-llama/Meta-Llama-3-8B-Instruct".
+            max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
+            temperature: float. Sampling temperature.
         """
         super().__init__()
         self.api_key = api_key or os.getenv("GOODFIRE_API_KEY")
@@ -58,9 +58,7 @@ class GoodfireLLM(LM):
 
     @classmethod
     def create_from_arg_string(cls, arg_string, additional_config=None):
-        """
-        Create an instance from an argument string.
-        """
+        """Create an instance from an argument string."""
         args = utils.simple_parse_args_string(arg_string)
         pretrained = args.pop("pretrained", "meta-llama/Meta-Llama-3-8B-Instruct")
         return cls(model=pretrained, **args)
@@ -73,24 +71,29 @@ class GoodfireLLM(LM):
     def max_gen_toks(self) -> int:
         return self.max_completion_tokens
 
+    @property
+    def tokenizer_name(self) -> str:
+        """Return the name of the tokenizer to use for chat templates."""
+        # For Llama models, use the Llama tokenizer
+        if "llama" in self.model.lower():
+            return "meta-llama/Llama-2-7b-hf"
+        # Default to Llama tokenizer if unknown
+        return "meta-llama/Llama-2-7b-hf"
+
     def tok_encode(self, string: str) -> List[int]:
-        # Placeholder for tokenization - actual token count not needed
+        """Placeholder for tokenization - actual token count not needed."""
         return [0] * (len(string) // 4)  # Rough estimate
 
     def tok_decode(self, tokens: List[int]) -> str:
-        # Not needed for generation
+        """Not needed for generation."""
         return ""
 
     def _model_call(self, inps):
-        """
-        Not used by lm-eval-harness for generate_until; raise if accidentally called.
-        """
+        """Not used by lm-eval-harness for generate_until."""
         raise NotImplementedError("GoodfireLLM does not support direct _model_call usage.")
 
     def _model_generate(self, context, max_length, eos_token_id):
-        """
-        Not used, we override 'generate_until' from LocalCompletionsAPI.
-        """
+        """Not used, we override 'generate_until'."""
         raise NotImplementedError("GoodfireLLM does not use _model_generate in this integration.")
 
     def loglikelihood(self, requests):
@@ -99,51 +102,10 @@ class GoodfireLLM(LM):
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Loglikelihood_rolling not supported for Goodfire models")
 
-    def format_results(self, results):
-        """Format results in a clean table format similar to VLLM output."""
-        output = []
-        
-        # Add model info
-        output.append(f"\nResults for Goodfire LLM Evaluation:")
-        output.append("-" * 100)
-        output.append(f"Model: goodfire (model={self.model})")
-        output.append(f"Temperature: {self.temperature}")
-        output.append("-" * 100)
-        
-        # Header
-        output.append("|     Tasks     |Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|")
-        output.append("|---------------|------:|----------------|-----:|-----------|---|-----:|---|-----:|")
-        
-        # Results for each task
-        if 'results' in results:
-            for task_name, task_results in results['results'].items():
-                version = results['versions'].get(task_name, '')
-                n_shot = results['n-shot'].get(task_name, 0)
-                
-                # Handle different metrics and filters
-                for key in task_results:
-                    if ',' in str(key) and key != 'alias':
-                        metric, filter_name = key.split(',', 1)
-                        if not metric.endswith('_stderr'):
-                            value = task_results[key]
-                            stderr = task_results.get(f'{metric}_stderr,{filter_name}', 0)
-                            
-                            # Get higher_is_better info
-                            higher_is_better = results.get('higher_is_better', {}).get(task_name, {}).get(metric)
-                            arrow = "↑" if higher_is_better else "↓" if higher_is_better is False else " "
-                            
-                            output.append(
-                                f"|{task_name:<15}|{version:>6}|{filter_name:<14}|{n_shot:>5}|{metric:>10}|{arrow}  |{value:>5.4f}|±  |{stderr:>5.4f}|"
-                            )
-        
-        output.append("-" * 100)
-        formatted = "\n".join(output)
-        eval_logger.info(formatted)
-        return formatted
-
     def generate_until(
         self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[str]:
+        """Generate responses for a list of requests."""
         res = []
         pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
 
@@ -172,11 +134,12 @@ class GoodfireLLM(LM):
                     top_p=top_p,
                 )
                 
+                # Extract content from ChatCompletion object
+                output = response.choices[0].message['content']
+                
                 # Log the first response for debugging
                 if len(res) == 0:
-                    print(f"\nFirst response: {response.choices[0].message.content}\n")
-
-                output = response.choices[0].message.content
+                    print(f"\nFirst response: {output}\n")
                 
                 # Handle stop sequences if provided
                 if until:
@@ -188,12 +151,12 @@ class GoodfireLLM(LM):
                 pbar.update(1)
             except Exception as e:
                 print(f"Error generating response: {str(e)}")
+                # Print more details about the response for debugging
+                if len(res) == 0:
+                    print(f"Response type: {type(response)}")
+                    print(f"Response content: {response}")
                 res.append("")  # Return empty string on error
                 pbar.update(1)
 
         pbar.close()
         return res
-
-
-# Register the model
-register_model("goodfire_llms", GoodfireLLM)
