@@ -14,6 +14,7 @@ from lm_eval import utils
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
 from lm_eval.models.utils import handle_stop_sequences
+from lm_eval.api.registry import register_model
 from tqdm import tqdm
 
 
@@ -54,6 +55,15 @@ class GoodfireLLM(LM):
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
         self._max_length = 4096  # Default max length for context + completion
+
+    @classmethod
+    def create_from_arg_string(cls, arg_string, additional_config=None):
+        """
+        Create an instance from an argument string.
+        """
+        args = utils.simple_parse_args_string(arg_string)
+        pretrained = args.pop("pretrained", "meta-llama/Meta-Llama-3-8B-Instruct")
+        return cls(model=pretrained, **args)
 
     @property
     def max_length(self) -> int:
@@ -184,12 +194,6 @@ class GoodfireLLM(LM):
         pbar.close()
         return res
 
+
 # Register the model
-def create_model(pretrained='meta-llama/Meta-Llama-3-8B-Instruct', **kwargs):
-    return GoodfireLLM(model=pretrained, **kwargs)
-
-if __name__ == "__main__":
-    from lm_eval import tasks, evaluator
-    from lm_eval.api.registry import register_model
-
-    register_model("goodfire_llms", create_model)
+register_model("goodfire_llms", GoodfireLLM)
