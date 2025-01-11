@@ -124,6 +124,33 @@ class GoodfireLLM(LM):
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Loglikelihood_rolling not supported for Goodfire models")
 
+    def apply_chat_template(
+        self, messages: List[Dict[str, str]], system_message: str = None
+    ) -> str:
+        """Apply chat template to format messages for the model.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            system_message: Optional system message to prepend
+        
+        Returns:
+            Formatted chat string
+        """
+        formatted_messages = []
+        
+        # Add system message if provided
+        if system_message:
+            formatted_messages.append({
+                "role": "system",
+                "content": system_message
+            })
+        
+        # Add all other messages
+        formatted_messages.extend(messages)
+        
+        # Return raw messages - the chat completion API will handle formatting
+        return formatted_messages
+
     def generate_until(
         self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[str]:
@@ -155,8 +182,15 @@ class GoodfireLLM(LM):
             _debug_log_prompt(context, idx)
 
             try:
+                # If context is already a list of messages, use it directly
+                if isinstance(context, list) and all(isinstance(m, dict) for m in context):
+                    messages = context
+                else:
+                    # Otherwise treat as a single user message
+                    messages = [{"role": "user", "content": context}]
+
                 response = self.client.chat.completions.create(
-                    messages=[{"role": "user", "content": context}],
+                    messages=messages,
                     model=self.model,
                     max_completion_tokens=self.max_completion_tokens,
                     temperature=temperature,
