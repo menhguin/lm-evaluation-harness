@@ -17,7 +17,7 @@ from lm_eval.models.openai_completions import LocalCompletionsAPI
 eval_logger = utils.eval_logger
 
 
-class GoodfireLLM(LocalCompletionsAPI):
+class GoodfireLLM(LM):
     """
     Integration of Goodfire's 'OpenAI-plus' chat API with the EleutherAI lm-eval-harness.
     This class uses the Goodfire client for completions.
@@ -43,12 +43,13 @@ class GoodfireLLM(LocalCompletionsAPI):
           temperature: float for sampling temperature.
           kwargs: Additional arguments to store or pass into gen_kwargs.
         """
-        super().__init__(**kwargs)
+        super().__init__()
         self.api_key = api_key
-        self.model_str = model  # e.g. "meta-llama/Meta-Llama-3-8B-Instruct"
+        self.model_str = model
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
         self.kwargs = kwargs
+        self._max_length = 4096
 
         try:
             self.client = goodfire.Client(api_key=self.api_key)
@@ -59,8 +60,7 @@ class GoodfireLLM(LocalCompletionsAPI):
 
     @property
     def max_length(self) -> int:
-        # Hardcode or tweak if needed. Goodfire often has large context windows.
-        return 4096
+        return self._max_length
 
     @property
     def max_gen_toks(self) -> int:
@@ -108,38 +108,28 @@ class GoodfireLLM(LocalCompletionsAPI):
             max_gen_toks = gen_args.get("max_gen_toks", self.max_completion_tokens)
             temperature = gen_args.get("temperature", self.temperature)
 
-            # Prepare standard chat payload for Goodfire:
             messages = [{"role": "user", "content": prompt_str}]
-
-            # The do_sample argument typically indicates we want to sample, so we pass that to Goodfire:
             do_sample = gen_args.get("do_sample", True)
 
-            # Build additional generation kwargs:
             gf_kwargs = {
                 "model": self.model_str,
                 "max_completion_tokens": max_gen_toks,
                 "temperature": temperature,
-                # Goodfire 'top_p', 'min_p', etc. can also be passed as needed.
                 "stream": False,
             }
 
-            # Retrieve completion
             completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
 
-            # Goodfire returns a dictionary, not an object:
-            if not completion_response or 'choices' not in completion_response:
-                # Some fallback blank
+            if not completion_response or not completion_response.choices:
                 output_text = ""
             else:
-                output_text = completion_response['choices'][0]['message']['content']
+                output_text = completion_response.choices[0].message['content']
 
-            # If we have stop sequences in 'until', we'll apply them:
             for stop_seq in until:
                 pos = output_text.find(stop_seq)
                 if pos != -1:
                     output_text = output_text[:pos]
 
-            # Store result & cache if needed
             results.append(output_text)
             self.cache_hook.add_partial("generate_until", request, output_text)
 
