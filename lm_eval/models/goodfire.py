@@ -23,32 +23,13 @@ def get_goodfire_api_key() -> str:
     """Get Goodfire API key from environment."""
     return os.getenv('GOODFIRE_API_KEY')
 
-def _extract_answer(text: str) -> Optional[str]:
-    """Extract answer from text based on common formats."""
-    # Try GSM8K format: "The answer is X"
-    match = re.search(r"The answer is (\-?[0-9\.\,]+)", text)
-    if match:
-        return match.group(1)
-    
-    # Try GPQA format: "The answer is (X)" where X is A,B,C,D
-    match = re.search(r"The answer is \(([A-D])\)", text, re.IGNORECASE)
-    if match:
-        return f"({match.group(1).upper()})"
-    
-    return None
-
 def _debug_log_prompt(prompt: str, index: int) -> None:
     """Log a prompt for debugging."""
     eval_logger.info(f"\n{'='*50}\nPROMPT #{index}:\n{'='*50}\n{prompt}\n{'='*50}\n")
 
 def _debug_log_response(response: str, index: int, expected: Optional[str] = None) -> None:
     """Log a response for debugging."""
-    actual = _extract_answer(response)
     eval_logger.info(f"\n{'='*50}\nRESPONSE #{index}:\n{'='*50}\n{response}\n")
-    if expected is not None:
-        eval_logger.info(f"Expected answer format: The answer is {expected}")
-        eval_logger.info(f"Actual answer extracted: {actual}")
-        eval_logger.info(f"Correct format: {actual is not None}")
     eval_logger.info("="*50 + "\n")
 
 def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
@@ -105,6 +86,14 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
+            # For GPQA, ensure we're just asking for the letter choice
+            if any("Choices:\n(A)" in msg["content"] for msg in messages):
+                # Add instruction to just return the letter choice
+                messages.append({
+                    "role": "system",
+                    "content": "Respond with 'The answer is (X)' where X is your chosen letter A, B, C, or D."
+                })
+            
             response = self.client.chat.completions.create(
                 messages=messages,
                 model=self.model,
@@ -114,7 +103,7 @@ class GoodfireLLM(LM):
             )
             
             output = response.choices[0].message['content']
-            _debug_log_response(output, idx, expected_answer)
+            _debug_log_response(output, idx)
             return output
         except Exception as e:
             eval_logger.error(f"Error generating response #{idx}: {str(e)}")
