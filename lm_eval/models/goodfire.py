@@ -184,5 +184,4 @@ class GoodfireLLM(LM):
                 pbar.update(1)
 
         pbar.close()
-        return res
-```
+        return res 
