@@ -100,34 +100,42 @@ class GoodfireLLM(LM):
         output = []
         
         # Add model info
-        output.append(f"goodfire (model={self.model_str}), temperature={self.temperature}")
+        output.append(f"\nResults for Goodfire LLM Evaluation:")
+        output.append("-" * 100)
+        output.append(f"Model: goodfire (model={self.model_str})")
+        output.append(f"Temperature: {self.temperature}")
+        output.append("-" * 100)
         
         # Header
         output.append("|     Tasks     |Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|")
         output.append("|---------------|------:|----------------|-----:|-----------|---|-----:|---|-----:|")
         
         # Results for each task
-        for task_name, task_results in results['results'].items():
-            version = results['versions'].get(task_name, '')
-            n_shot = results['n-shot'].get(task_name, 0)
-            
-            # Handle different metrics and filters
-            for key in task_results:
-                if ',' in str(key) and key != 'alias':
-                    metric, filter_name = key.split(',', 1)
-                    if not metric.endswith('_stderr'):
-                        value = task_results[key]
-                        stderr = task_results.get(f'{metric}_stderr,{filter_name}', 0)
-                        
-                        # Get higher_is_better info
-                        higher_is_better = results.get('higher_is_better', {}).get(task_name, {}).get(metric)
-                        arrow = "↑" if higher_is_better else "↓" if higher_is_better is False else " "
-                        
-                        output.append(
-                            f"|{task_name:<15}|{version:>6}|{filter_name:<14}|{n_shot:>5}|{metric:>10}|{arrow}  |{value:>5.4f}|±  |{stderr:>5.4f}|"
-                        )
+        if 'results' in results:
+            for task_name, task_results in results['results'].items():
+                version = results['versions'].get(task_name, '')
+                n_shot = results['n-shot'].get(task_name, 0)
+                
+                # Handle different metrics and filters
+                for key in task_results:
+                    if ',' in str(key) and key != 'alias':
+                        metric, filter_name = key.split(',', 1)
+                        if not metric.endswith('_stderr'):
+                            value = task_results[key]
+                            stderr = task_results.get(f'{metric}_stderr,{filter_name}', 0)
+                            
+                            # Get higher_is_better info
+                            higher_is_better = results.get('higher_is_better', {}).get(task_name, {}).get(metric)
+                            arrow = "↑" if higher_is_better else "↓" if higher_is_better is False else " "
+                            
+                            output.append(
+                                f"|{task_name:<15}|{version:>6}|{filter_name:<14}|{n_shot:>5}|{metric:>10}|{arrow}  |{value:>5.4f}|±  |{stderr:>5.4f}|"
+                            )
         
-        return "\n".join(output)
+        output.append("-" * 100)
+        formatted = "\n".join(output)
+        eval_logger.info(formatted)
+        return formatted
 
     def generate_until(self, requests, disable_tqdm=False) -> List[str]:
         """
@@ -176,5 +184,15 @@ class GoodfireLLM(LM):
             except Exception as e:
                 eval_logger.warning(f"Error in generate_until: {str(e)}")
                 results.append("")  # Return empty string on error
+
+        # If this was called through evaluate(), format the results
+        if hasattr(self, '_current_task_list'):
+            eval_logger.info("\nResults:")
+            eval_logger.info("-" * 50)
+            eval_logger.info(f"Model: goodfire (model={self.model_str})")
+            eval_logger.info(f"Temperature: {self.temperature}")
+            if top_p != 1.0:
+                eval_logger.info(f"Top-p: {top_p}")
+            eval_logger.info("-" * 50)
 
         return results
