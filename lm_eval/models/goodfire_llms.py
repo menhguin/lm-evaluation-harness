@@ -145,12 +145,19 @@ class GoodfireLLM(LM):
         from tqdm import tqdm
 
         results = []
-        for request in tqdm(requests, disable=disable_tqdm):
+        for i, request in enumerate(tqdm(requests, disable=disable_tqdm)):
             prompt_str, gen_args = request.args
             until = gen_args.get("until") or []
             max_gen_toks = gen_args.get("max_gen_toks", self.max_completion_tokens)
             temperature = gen_args.get("temperature", self.temperature)
             top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
+
+            # Debug: Log the prompt
+            if i == 0:  # Log just the first prompt to avoid spam
+                eval_logger.info("\nExample prompt:")
+                eval_logger.info("-" * 50)
+                eval_logger.info(prompt_str)
+                eval_logger.info("-" * 50)
 
             messages = [{"role": "user", "content": prompt_str}]
             do_sample = gen_args.get("do_sample", True)
@@ -173,6 +180,13 @@ class GoodfireLLM(LM):
                     output_text = ""
                 else:
                     output_text = completion_response.choices[0].message['content']
+
+                # Debug: Log the response
+                if i == 0:  # Log just the first response
+                    eval_logger.info("\nExample response:")
+                    eval_logger.info("-" * 50)
+                    eval_logger.info(output_text)
+                    eval_logger.info("-" * 50)
 
                 for stop_seq in until:
                     pos = output_text.find(stop_seq)
