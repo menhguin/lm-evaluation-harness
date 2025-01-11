@@ -25,6 +25,23 @@ def get_goodfire_api_key() -> str:
     return os.getenv('GOODFIRE_API_KEY')
 
 
+def _debug_log_prompt(prompt: str, index: int) -> None:
+    """Log a prompt for debugging."""
+    eval_logger.info(f"\n{'='*50}\nPROMPT #{index}:\n{'='*50}\n{prompt}\n{'='*50}\n")
+
+def _debug_log_response(response: str, index: int) -> None:
+    """Log a response for debugging."""
+    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index}:\n{'='*50}\n{response}\n{'='*50}\n")
+
+def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
+    """Log processed output for debugging."""
+    eval_logger.info(f"\n{'='*50}\nPROCESSED #{index}:\n{'='*50}\n{processed}\n")
+    if stop_seq:
+        eval_logger.info(f"(Truncated at stop sequence: {stop_seq})\n{'='*50}\n")
+    else:
+        eval_logger.info(f"(No truncation)\n{'='*50}\n")
+
+
 @register_model("goodfire")
 class GoodfireLLM(LM):
     """
@@ -114,7 +131,7 @@ class GoodfireLLM(LM):
         res = []
         pbar = tqdm(total=len(requests), disable=disable_tqdm, desc="Running requests")
 
-        for req in requests:
+        for idx, req in enumerate(requests):
             context, gen_kwargs = req.args
             
             # Extract generation parameters from task config
@@ -134,9 +151,8 @@ class GoodfireLLM(LM):
                 temperature = self.temperature
                 top_p = 1.0
 
-            # Log the first prompt for debugging
-            if len(res) == 0:
-                eval_logger.debug(f"\nFirst prompt: {context}\n")
+            # Log prompt for debugging
+            _debug_log_prompt(context, idx)
 
             try:
                 response = self.client.chat.completions.create(
@@ -150,26 +166,31 @@ class GoodfireLLM(LM):
                 # Extract content from ChatCompletion object
                 output = response.choices[0].message['content']
                 
-                # Log the first response for debugging
-                if len(res) == 0:
-                    eval_logger.debug(f"\nFirst response: {output}\n")
+                # Log raw response for debugging
+                _debug_log_response(output, idx)
                 
                 # Handle stop sequences if provided
                 if until:
                     # Try each stop sequence
                     for stop_seq in until:
                         if stop_seq in output:
+                            original_len = len(output)
                             output = output[:output.index(stop_seq)]
-                            break  # Stop at first matching sequence
+                            if len(output) < original_len:
+                                _debug_log_processed(output, idx, stop_seq)
+                                break
+                    else:
+                        _debug_log_processed(output, idx)
+                else:
+                    _debug_log_processed(output, idx)
 
                 res.append(output)
                 pbar.update(1)
             except Exception as e:
-                eval_logger.warning(f"Error generating response: {str(e)}")
-                # Print more details about the response for debugging
+                eval_logger.error(f"Error generating response #{idx}: {str(e)}")
                 if 'response' in locals():
-                    eval_logger.debug(f"Response type: {type(response)}")
-                    eval_logger.debug(f"Response content: {response}")
+                    eval_logger.error(f"Response type: {type(response)}")
+                    eval_logger.error(f"Response content: {response}")
                 res.append("")  # Return empty string on error
                 pbar.update(1)
 
