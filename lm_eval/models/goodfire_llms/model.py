@@ -14,12 +14,14 @@ from lm_eval import utils
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
 from lm_eval.models.utils import handle_stop_sequences
+from lm_eval.api.registry import register_model
 from tqdm import tqdm
 
 
 eval_logger = utils.eval_logger
 
 
+@register_model("goodfire_llms")
 class GoodfireLLM(LM):
     """
     Integration of Goodfire's 'OpenAI-plus' chat API with the EleutherAI lm-eval-harness.
