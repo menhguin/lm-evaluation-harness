@@ -153,9 +153,18 @@ class GoodfireLLM(LM):
             temperature = gen_args.get("temperature", self.temperature)
             top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
 
-            # Add system message to enforce format
+            # Add system message to enforce format and focus on final question
             messages = [
-                {"role": "system", "content": "You are a helpful assistant that answers multiple choice questions. Always end your response with 'Answer: (X)' where X is one of the options (A, B, C, or D)."},
+                {
+                    "role": "system", 
+                    "content": (
+                        "You are a helpful assistant that answers multiple choice questions. "
+                        "The prompt will contain several example questions and answers, followed by a final question to answer. "
+                        "ONLY answer the final question in the prompt. "
+                        "Previous questions are just examples to show the format. "
+                        "End your response with 'Answer: (X)' where X is one of the options (A, B, C, or D)."
+                    )
+                },
                 {"role": "user", "content": prompt_str}
             ]
 
@@ -186,6 +195,12 @@ class GoodfireLLM(LM):
                 # Check if response ends with Answer: (X)
                 if not any(output_text.strip().endswith(f"Answer: ({x})") for x in ['A', 'B', 'C', 'D']):
                     eval_logger.warning("Response doesn't end with Answer: (X) format")
+                    # Try to extract answer from the response if it's there but not at the end
+                    for line in reversed(output_text.split('\n')):
+                        if line.startswith('Answer: (') and line[-1] == ')':
+                            output_text = line
+                            eval_logger.info("Found and extracted answer line")
+                            break
 
                 for stop_seq in until:
                     pos = output_text.find(stop_seq)
