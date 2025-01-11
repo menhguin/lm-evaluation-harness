@@ -152,6 +152,9 @@ class GoodfireLLM(LM):
             temperature = gen_args.get("temperature", self.temperature)
             top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
 
+            # Add explicit instruction to end with Answer: (X)
+            prompt_str = prompt_str + "\nMake sure to end your response with 'Answer: (X)' where X is one of the multiple choice options (A, B, C, or D)."
+
             # Debug: Log the prompt
             if i == 0:  # Log just the first prompt to avoid spam
                 eval_logger.info("\nExample prompt:")
