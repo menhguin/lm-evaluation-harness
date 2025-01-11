@@ -144,6 +144,7 @@ class GoodfireLLM(LM):
         """
         from tqdm import tqdm
 
+        eval_logger.info("\n=== Starting Generation ===")
         results = []
         for i, request in enumerate(tqdm(requests, disable=disable_tqdm)):
             prompt_str, gen_args = request.args
@@ -152,18 +153,11 @@ class GoodfireLLM(LM):
             temperature = gen_args.get("temperature", self.temperature)
             top_p = gen_args.get("top_p", 1.0)  # Default to 1.0 if not specified
 
-            # Add explicit instruction to end with Answer: (X)
-            prompt_str = prompt_str + "\nMake sure to end your response with 'Answer: (X)' where X is one of the multiple choice options (A, B, C, or D)."
-
-            # Debug: Log the prompt
-            if i == 0:  # Log just the first prompt to avoid spam
-                eval_logger.info("\nExample prompt:")
-                eval_logger.info("-" * 50)
-                eval_logger.info(prompt_str)
-                eval_logger.info("-" * 50)
-
-            messages = [{"role": "user", "content": prompt_str}]
-            do_sample = gen_args.get("do_sample", True)
+            # Add system message to enforce format
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant that answers multiple choice questions. Always end your response with 'Answer: (X)' where X is one of the options (A, B, C, or D)."},
+                {"role": "user", "content": prompt_str}
+            ]
 
             gf_kwargs = {
                 "model": self.model_str,
@@ -177,24 +171,27 @@ class GoodfireLLM(LM):
             gf_kwargs = {k: v for k, v in gf_kwargs.items() if v is not None}
 
             try:
+                eval_logger.info(f"\n--- Question {i+1} ---")
+                eval_logger.info(f"Prompt: {prompt_str[:200]}...")  # Show first 200 chars of prompt
+                
                 completion_response = self.client.chat.completions.create(messages, **gf_kwargs)
 
                 if not completion_response or not completion_response.choices:
                     output_text = ""
+                    eval_logger.warning("No response generated")
                 else:
                     output_text = completion_response.choices[0].message['content']
+                    eval_logger.info(f"Response: {output_text}")
 
-                # Debug: Log the response
-                if i == 0:  # Log just the first response
-                    eval_logger.info("\nExample response:")
-                    eval_logger.info("-" * 50)
-                    eval_logger.info(output_text)
-                    eval_logger.info("-" * 50)
+                # Check if response ends with Answer: (X)
+                if not any(output_text.strip().endswith(f"Answer: ({x})") for x in ['A', 'B', 'C', 'D']):
+                    eval_logger.warning("Response doesn't end with Answer: (X) format")
 
                 for stop_seq in until:
                     pos = output_text.find(stop_seq)
                     if pos != -1:
                         output_text = output_text[:pos]
+                        eval_logger.info(f"Truncated at stop sequence: {stop_seq}")
 
                 results.append(output_text)
                 self.cache_hook.add_partial("generate_until", request, output_text)
@@ -202,14 +199,5 @@ class GoodfireLLM(LM):
                 eval_logger.warning(f"Error in generate_until: {str(e)}")
                 results.append("")  # Return empty string on error
 
-        # If this was called through evaluate(), format the results
-        if hasattr(self, '_current_task_list'):
-            eval_logger.info("\nResults:")
-            eval_logger.info("-" * 50)
-            eval_logger.info(f"Model: goodfire (model={self.model_str})")
-            eval_logger.info(f"Temperature: {self.temperature}")
-            if top_p != 1.0:
-                eval_logger.info(f"Top-p: {top_p}")
-            eval_logger.info("-" * 50)
-
+        eval_logger.info("\n=== Generation Complete ===")
         return results
