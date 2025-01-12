@@ -3,12 +3,12 @@ import re
 from typing import Union, Dict, List, Optional
 import os
 
+# Move goodfire import inside try block
 try:
     import goodfire
-except ImportError as e:
-    raise ModuleNotFoundError(
-        "Please install goodfire to use Goodfire models: pip install goodfire"
-    ) from e
+    _has_goodfire = True
+except ImportError:
+    _has_goodfire = False
 
 from lm_eval import utils
 from lm_eval.api.model import LM
@@ -72,6 +72,10 @@ class GoodfireLLM(LM):
             max_completion_tokens: int. Max tokens to generate when calling the Goodfire API.
             temperature: float. Sampling temperature.
         """
+        if not _has_goodfire:
+            raise ModuleNotFoundError(
+                "Package `goodfire` not found. Please install it via `pip install goodfire`"
+            )
         super().__init__()
         self.api_key = api_key or get_goodfire_api_key()
         if not self.api_key:
