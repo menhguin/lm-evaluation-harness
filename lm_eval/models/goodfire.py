@@ -84,6 +84,13 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
+            # Add format instruction if this is a multiple choice question
+            if any("Choices:" in msg["content"] for msg in messages):
+                messages.insert(0, {
+                    "role": "system",
+                    "content": "You are taking a multiple choice test. You must respond with ONLY the letter choice in parentheses, e.g. (A), (B), (C), or (D). Do not explain or add any other text."
+                })
+
             api_params = {
                 "messages": messages,
                 "model": self.model,
@@ -128,11 +135,41 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Prepare messages
-                    if isinstance(context, list) and all(isinstance(m, dict) for m in context):
-                        messages = context
-                    else:
-                        messages = [{"role": "user", "content": context}]
+                    # Convert special tokens to chat format
+                    messages = []
+                    current_role = "user"
+                    current_content = []
+                    
+                    # Split on special tokens
+                    parts = context.split("<|")
+                    for part in parts:
+                        if not part:
+                            continue
+                        if "start_header_id|>" in part:
+                            # New message starts
+                            if current_content:
+                                messages.append({
+                                    "role": current_role,
+                                    "content": "".join(current_content).strip()
+                                })
+                                current_content = []
+                            current_role = part.split("|>")[0].split("start_header_id|")[-1]
+                        elif "end_header_id|>" in part:
+                            # Content follows
+                            content = part.split("end_header_id|>")[-1]
+                            if "eot_id" not in content:
+                                current_content.append(content)
+                        elif "begin_of_text|>" in part or "eot_id|>" in part:
+                            continue
+                        else:
+                            current_content.append("<|" + part)
+                    
+                    # Add final message if any
+                    if current_content:
+                        messages.append({
+                            "role": current_role,
+                            "content": "".join(current_content).strip()
+                        })
 
                     # Generate completion
                     output = self._generate_completion(
