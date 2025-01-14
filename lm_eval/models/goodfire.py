@@ -280,4 +280,4 @@ class GoodfireLLM(LM):
             return formatted_messages
             
         # For hashing and other purposes, return a string representation
-        return json.dumps(formatted_messages, sort_keys=True) 
+        return json.dumps(formatted_messages, sort_keys=True)
