@@ -565,6 +565,4 @@ class VLLM(TemplateLM):
         kwargs["spaces_between_special_tokens"] = kwargs.get(
             "spaces_between_special_tokens", False
         )
-        # Handle min_z parameter
-        kwargs["min_z"] = kwargs.get("min_z", 0.0)
         return kwargs
