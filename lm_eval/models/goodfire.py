@@ -99,16 +99,21 @@ class GoodfireLLM(LM):
         try:
             # For GPQA, we want to follow the example format exactly
             if any("Choices:\n(A)" in msg["content"] for msg in messages):
-                # Add instruction to follow example format
+                # Add instruction to follow example format with examples
                 messages.append({
                     "role": "system",
                     "content": (
-                        "You are taking a multiple choice test. For each question:\n"
-                        "1. Read the question and choices carefully\n"
-                        "2. Select the best answer from choices A, B, C, or D\n"
-                        "3. Respond with ONLY the letter in parentheses, e.g. (A), (B), (C), or (D)\n"
-                        "4. Do not add any explanation or other text\n"
-                        "5. The answer must be in this exact format to be scored correctly"
+                        "You are taking a multiple choice test. You must follow these rules EXACTLY:\n"
+                        "1. ONLY output the answer letter in parentheses\n"
+                        "2. NO explanations or working out\n"
+                        "3. ONLY (A), (B), (C), or (D) are valid answers\n"
+                        "4. ANY other format will be scored as incorrect\n"
+                        "\nExample Q1: What is 2+2?\n"
+                        "Choices:\n(A) 3\n(B) 4\n(C) 5\n(D) 6\n"
+                        "Correct response: (B)\n"
+                        "\nExample Q2: What is the capital of France?\n"
+                        "Choices:\n(A) London\n(B) Berlin\n(C) Paris\n(D) Madrid\n"
+                        "Correct response: (C)\n"
                     )
                 })
             
@@ -134,33 +139,38 @@ class GoodfireLLM(LM):
                 # Clean up any extra whitespace or text
                 output = output.strip()
                 
-                # Extract just the answer in parentheses if present
+                # First check if it's already in exact format
+                if output in ['(A)', '(B)', '(C)', '(D)']:
+                    return output
+                
+                # If not, try to extract answer with strict patterns
                 import re
                 
                 # Try multiple patterns in order of preference:
                 patterns = [
-                    r'\([A-D]\)',  # Exact format (A)
-                    r'[A-D]',      # Just the letter
-                    r'(?i)the answer is \(?([A-D])\)?',  # "The answer is (A)" or "The answer is A"
-                    r'(?i)best answer is \(?([A-D])\)?', # "The best answer is (A)"
-                    r'(?i)choice \(?([A-D])\)?',         # "Choice (A)" or "Choice A"
-                    r'(?i)option \(?([A-D])\)?'          # "Option (A)" or "Option A" 
+                    r'^\([A-D]\)$',  # Exact format (A) only
+                    r'(?i)^[A-D]$',  # Just the letter
+                    r'(?i)the (?:best )?answer is \(?([A-D])\)?',  # Common phrasings
+                    r'(?i)(?:choice|option) \(?([A-D])\)?',  # Other common formats
+                    r'(?i)[^a-z]([A-D])[^a-z]',  # Any isolated letter
                 ]
                 
                 for pattern in patterns:
-                    if match := re.search(pattern, output):
+                    if match := re.search(pattern, output, re.IGNORECASE):
                         # If pattern captured a group, use that, otherwise use whole match
                         letter = match.group(1) if len(match.groups()) > 0 else match.group(0)
                         # Remove any parentheses and convert to uppercase
                         letter = re.sub(r'[()]', '', letter).upper()
-                        output = f'({letter})'
-                        break
+                        return f'({letter})'
                 
-                # If no valid format found, try to extract any letter A-D
-                if not any(c in output for c in ['(A)', '(B)', '(C)', '(D)']):
-                    # Default to first letter A-D found, if any
-                    if letter_match := re.search(r'[A-D]', output):
-                        output = f'({letter_match.group(0)})'
+                # If we get here, try one last time to find any A-D letter
+                if match := re.search(r'[A-D]', output, re.IGNORECASE):
+                    letter = match.group(0).upper()
+                    return f'({letter})'
+                
+                # If still no valid answer format was found
+                eval_logger.warning(f"Could not extract valid answer format from: {output}")
+                return ""
             
             _debug_log_response(output, idx)
             
