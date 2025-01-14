@@ -102,7 +102,7 @@ class GoodfireLLM(LM):
                 # Add instruction to follow example format
                 messages.append({
                     "role": "system",
-                    "content": "Please respond with just the letter choice in parentheses, like '(A)' or '(B)' or '(C)' or '(D)'."
+                    "content": "You MUST respond with ONLY the letter choice in parentheses, exactly like '(A)' or '(B)' or '(C)' or '(D)'. Do not add any explanation or other text. The answer must be in this exact format to be scored correctly."
                 })
             
             # EXPERIMENTAL: Create API params without inspect
@@ -121,6 +121,21 @@ class GoodfireLLM(LM):
                 response = self.client.chat.completions.create(**api_params)
             
             output = response.choices[0].message['content']
+            
+            # For GPQA, ensure output is in correct format
+            if any("Choices:\n(A)" in msg["content"] for msg in messages):
+                # Clean up any extra whitespace or text
+                output = output.strip()
+                # Extract just the answer in parentheses if present
+                import re
+                if match := re.search(r'\([A-D]\)', output):
+                    output = match.group(0)
+                # If no valid format found, try to fix common issues
+                elif re.search(r'[A-D]', output):
+                    # If just a letter, add parentheses
+                    letter = re.search(r'[A-D]', output).group(0)
+                    output = f'({letter})'
+            
             _debug_log_response(output, idx)
             
             # EXPERIMENTAL: Log inspection features if available
