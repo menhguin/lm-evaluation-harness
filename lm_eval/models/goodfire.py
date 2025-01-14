@@ -102,7 +102,14 @@ class GoodfireLLM(LM):
                 # Add instruction to follow example format
                 messages.append({
                     "role": "system",
-                    "content": "You MUST respond with ONLY the letter choice in parentheses, exactly like '(A)' or '(B)' or '(C)' or '(D)'. Do not add any explanation or other text. The answer must be in this exact format to be scored correctly."
+                    "content": (
+                        "You are taking a multiple choice test. For each question:\n"
+                        "1. Read the question and choices carefully\n"
+                        "2. Select the best answer from choices A, B, C, or D\n"
+                        "3. Respond with ONLY the letter in parentheses, e.g. (A), (B), (C), or (D)\n"
+                        "4. Do not add any explanation or other text\n"
+                        "5. The answer must be in this exact format to be scored correctly"
+                    )
                 })
             
             # EXPERIMENTAL: Create API params without inspect
@@ -126,15 +133,34 @@ class GoodfireLLM(LM):
             if any("Choices:\n(A)" in msg["content"] for msg in messages):
                 # Clean up any extra whitespace or text
                 output = output.strip()
+                
                 # Extract just the answer in parentheses if present
                 import re
-                if match := re.search(r'\([A-D]\)', output):
-                    output = match.group(0)
-                # If no valid format found, try to fix common issues
-                elif re.search(r'[A-D]', output):
-                    # If just a letter, add parentheses
-                    letter = re.search(r'[A-D]', output).group(0)
-                    output = f'({letter})'
+                
+                # Try multiple patterns in order of preference:
+                patterns = [
+                    r'\([A-D]\)',  # Exact format (A)
+                    r'[A-D]',      # Just the letter
+                    r'(?i)the answer is \(?([A-D])\)?',  # "The answer is (A)" or "The answer is A"
+                    r'(?i)best answer is \(?([A-D])\)?', # "The best answer is (A)"
+                    r'(?i)choice \(?([A-D])\)?',         # "Choice (A)" or "Choice A"
+                    r'(?i)option \(?([A-D])\)?'          # "Option (A)" or "Option A" 
+                ]
+                
+                for pattern in patterns:
+                    if match := re.search(pattern, output):
+                        # If pattern captured a group, use that, otherwise use whole match
+                        letter = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                        # Remove any parentheses and convert to uppercase
+                        letter = re.sub(r'[()]', '', letter).upper()
+                        output = f'({letter})'
+                        break
+                
+                # If no valid format found, try to extract any letter A-D
+                if not any(c in output for c in ['(A)', '(B)', '(C)', '(D)']):
+                    # Default to first letter A-D found, if any
+                    if letter_match := re.search(r'[A-D]', output):
+                        output = f'({letter_match.group(0)})'
             
             _debug_log_response(output, idx)
             
