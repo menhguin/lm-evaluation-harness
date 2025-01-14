@@ -27,10 +27,9 @@ def _debug_log_prompt(prompt: str, index: int) -> None:
     """Log a prompt for debugging."""
     eval_logger.info(f"\n{'='*50}\nPROMPT #{index + 1}:\n{'='*50}\n{prompt}\n{'='*50}\n")
 
-def _debug_log_response(response: str, index: int, expected: Optional[str] = None) -> None:
+def _debug_log_response(response: str, index: int) -> None:
     """Log a response for debugging."""
-    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index + 1}:\n{'='*50}\n{response}\n")
-    eval_logger.info("="*50 + "\n")
+    eval_logger.info(f"\n{'='*50}\nRESPONSE #{index + 1}:\n{'='*50}\n{response}\n{'='*50}\n")
 
 def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> None:
     """Log processed output for debugging."""
@@ -40,22 +39,11 @@ def _debug_log_processed(processed: str, index: int, stop_seq: str = None) -> No
     else:
         eval_logger.info(f"(No truncation)\n{'='*50}\n")
 
-def _debug_log_inspect(features: List[Dict], index: int) -> None:
-    """Log inspection features for debugging."""
-    eval_logger.info(f"\n{'='*50}\nINSPECT #{index + 1}:\n{'='*50}")
-    for feature in features[:10]:  # Top 10 features by default
-        eval_logger.info(f"Feature: {feature['name']}, Score: {feature['score']:.3f}")
-    eval_logger.info("="*50 + "\n")
-
 @register_model("goodfire")
 class GoodfireLLM(LM):
     """
     Integration of Goodfire's chat API with the EleutherAI lm-eval-harness.
     This class uses the Goodfire client for completions.
-
-    Limitations:
-      - We do not currently support loglikelihood or loglikelihood_rolling.
-      - Only 'generate_until' style completions are provided (i.e., chat-based completions).
     """
 
     def __init__(
@@ -92,32 +80,17 @@ class GoodfireLLM(LM):
         messages: List[Dict[str, str]], 
         temperature: float,
         top_p: float,
-        idx: int = 0,
-        inspect: bool = False  # EXPERIMENTAL: Optional inspect parameter
+        idx: int = 0
     ) -> str:
         """Generate a single completion."""
         try:
-            # For GPQA, we want to follow the example format exactly
-            if any("Choices:\n(A)" in msg["content"] for msg in messages):
-                # Add instruction to follow example format with examples
-                messages.append({
+            # Add format instruction if this is a multiple choice question
+            if any("Choices:" in msg["content"] for msg in messages):
+                messages.insert(0, {
                     "role": "system",
-                    "content": (
-                        "You are taking a multiple choice test. You must follow these rules EXACTLY:\n"
-                        "1. ONLY output the answer letter in parentheses\n"
-                        "2. NO explanations or working out\n"
-                        "3. ONLY (A), (B), (C), or (D) are valid answers\n"
-                        "4. ANY other format will be scored as incorrect\n"
-                        "\nExample Q1: What is 2+2?\n"
-                        "Choices:\n(A) 3\n(B) 4\n(C) 5\n(D) 6\n"
-                        "Correct response: (B)\n"
-                        "\nExample Q2: What is the capital of France?\n"
-                        "Choices:\n(A) London\n(B) Berlin\n(C) Paris\n(D) Madrid\n"
-                        "Correct response: (C)\n"
-                    )
+                    "content": "You are taking a multiple choice test. You must respond with ONLY the letter choice in parentheses, e.g. (A), (B), (C), or (D). Do not explain or add any other text."
                 })
-            
-            # EXPERIMENTAL: Create API params without inspect
+
             api_params = {
                 "messages": messages,
                 "model": self.model,
@@ -126,58 +99,9 @@ class GoodfireLLM(LM):
                 "top_p": top_p
             }
             
-            # EXPERIMENTAL: Use client.inspect if available
-            if inspect and hasattr(self.client, 'inspect'):
-                response = self.client.inspect.chat.completions.create(**api_params)
-            else:
-                response = self.client.chat.completions.create(**api_params)
-            
+            response = self.client.chat.completions.create(**api_params)
             output = response.choices[0].message['content']
-            
-            # For GPQA, ensure output is in correct format
-            if any("Choices:\n(A)" in msg["content"] for msg in messages):
-                # Clean up any extra whitespace or text
-                output = output.strip()
-                
-                # First check if it's already in exact format
-                if output in ['(A)', '(B)', '(C)', '(D)']:
-                    return output
-                
-                # If not, try to extract answer with strict patterns
-                import re
-                
-                # Try multiple patterns in order of preference:
-                patterns = [
-                    r'^\([A-D]\)$',  # Exact format (A) only
-                    r'(?i)^[A-D]$',  # Just the letter
-                    r'(?i)the (?:best )?answer is \(?([A-D])\)?',  # Common phrasings
-                    r'(?i)(?:choice|option) \(?([A-D])\)?',  # Other common formats
-                    r'(?i)[^a-z]([A-D])[^a-z]',  # Any isolated letter
-                ]
-                
-                for pattern in patterns:
-                    if match := re.search(pattern, output, re.IGNORECASE):
-                        # If pattern captured a group, use that, otherwise use whole match
-                        letter = match.group(1) if len(match.groups()) > 0 else match.group(0)
-                        # Remove any parentheses and convert to uppercase
-                        letter = re.sub(r'[()]', '', letter).upper()
-                        return f'({letter})'
-                
-                # If we get here, try one last time to find any A-D letter
-                if match := re.search(r'[A-D]', output, re.IGNORECASE):
-                    letter = match.group(0).upper()
-                    return f'({letter})'
-                
-                # If still no valid answer format was found
-                eval_logger.warning(f"Could not extract valid answer format from: {output}")
-                return ""
-            
             _debug_log_response(output, idx)
-            
-            # EXPERIMENTAL: Log inspection features if available
-            if inspect and hasattr(response, 'inspect') and response.inspect:
-                _debug_log_inspect(response.inspect.features, idx)
-            
             return output
         except Exception as e:
             eval_logger.error(f"Error generating response #{idx + 1}: {str(e)}")
@@ -203,30 +127,56 @@ class GoodfireLLM(LM):
                         if not do_sample:
                             temperature = 0.0
                         top_p = kwargs.pop("top_p", 1.0)
-                        # EXPERIMENTAL: Extract inspect parameter from gen_kwargs
-                        inspect = kwargs.pop("inspect", False)
                     else:
                         until = []
                         temperature = self.temperature
                         top_p = 1.0
-                        inspect = False  # Default to False if no gen_kwargs
 
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Prepare messages
-                    if isinstance(context, list) and all(isinstance(m, dict) for m in context):
-                        messages = context
-                    else:
-                        messages = [{"role": "user", "content": context}]
+                    # Convert special tokens to chat format
+                    messages = []
+                    current_role = "user"
+                    current_content = []
+                    
+                    # Split on special tokens
+                    parts = context.split("<|")
+                    for part in parts:
+                        if not part:
+                            continue
+                        if "start_header_id|>" in part:
+                            # New message starts
+                            if current_content:
+                                messages.append({
+                                    "role": current_role,
+                                    "content": "".join(current_content).strip()
+                                })
+                                current_content = []
+                            current_role = part.split("|>")[0].split("start_header_id|")[-1]
+                        elif "end_header_id|>" in part:
+                            # Content follows
+                            content = part.split("end_header_id|>")[-1]
+                            if "eot_id" not in content:
+                                current_content.append(content)
+                        elif "begin_of_text|>" in part or "eot_id|>" in part:
+                            continue
+                        else:
+                            current_content.append("<|" + part)
+                    
+                    # Add final message if any
+                    if current_content:
+                        messages.append({
+                            "role": current_role,
+                            "content": "".join(current_content).strip()
+                        })
 
                     # Generate completion
                     output = self._generate_completion(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        idx=idx,
-                        inspect=inspect  # Pass inspect parameter to completion
+                        idx=idx
                     )
 
                     # Process stop sequences
