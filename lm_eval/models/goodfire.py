@@ -94,30 +94,11 @@ class GoodfireLLM(LM):
         
         # For single messages, just return the content
         if len(chat_history) == 1:
-            return self._format_message(chat_history[0])
+            return chat_history[0]["content"].strip()
             
-        # Extract system messages first
-        system_msgs = []
-        conversation = []
-        
-        for msg in chat_history:
-            formatted = self._format_message(msg)
-            if not formatted:
-                continue
-                
-            if msg["role"] == "system":
-                system_msgs.append(formatted)
-            else:
-                conversation.append(formatted)
-        
-        # Join all parts with appropriate spacing
-        parts = []
-        if system_msgs:
-            parts.append(self._format_turn(system_msgs))
-        if conversation:
-            parts.append(self._format_turn(conversation))
-            
-        return "\n\n".join(parts)
+        # For fewshot examples, just concatenate with newlines
+        # This lets the task's YAML config handle formatting
+        return "\n\n".join(msg["content"].strip() for msg in chat_history if msg.get("content"))
 
     def _generate_completion(
         self, 
