@@ -77,11 +77,13 @@ class GoodfireLLM(LM):
         self.chat_applied = False
 
     def _format_message(self, msg: Dict[str, str]) -> str:
-        """Format a single message based on its role."""
-        return msg["content"].strip() if msg["content"] else ""
+        """Format a single message based on its role and content."""
+        if not msg.get("content"):
+            return ""
+        return msg["content"].strip()
 
     def _format_turn(self, messages: List[str]) -> str:
-        """Format a complete conversation turn."""
+        """Format a conversation turn (one or more messages)."""
         return "\n\n".join(msg for msg in messages if msg)
 
     def apply_chat_template(
@@ -93,45 +95,29 @@ class GoodfireLLM(LM):
         # For single messages, just return the content
         if len(chat_history) == 1:
             return self._format_message(chat_history[0])
-
-        # Extract system message if present
-        system_msg = None
+            
+        # Extract system messages first
+        system_msgs = []
         conversation = []
         
         for msg in chat_history:
-            if msg["role"] == "system":
-                system_msg = self._format_message(msg)
-            else:
-                conversation.append(msg)
-                
-        # Format conversation turns
-        formatted_turns = []
-        current_turn = []
-        
-        for msg in conversation:
-            formatted_msg = self._format_message(msg)
-            if not formatted_msg:
+            formatted = self._format_message(msg)
+            if not formatted:
                 continue
                 
-            if msg["role"] == "user":
-                if current_turn:
-                    formatted_turns.append(self._format_turn(current_turn))
-                    current_turn = []
-                current_turn.append(formatted_msg)
-            elif msg["role"] == "assistant":
-                current_turn.append(formatted_msg)
-                
-        # Add final turn
-        if current_turn:
-            formatted_turns.append(self._format_turn(current_turn))
-            
-        # Combine all parts
-        all_parts = []
-        if system_msg:
-            all_parts.append(system_msg)
-        all_parts.extend(formatted_turns)
+            if msg["role"] == "system":
+                system_msgs.append(formatted)
+            else:
+                conversation.append(formatted)
         
-        return "\n\n".join(all_parts)
+        # Join all parts with appropriate spacing
+        parts = []
+        if system_msgs:
+            parts.append(self._format_turn(system_msgs))
+        if conversation:
+            parts.append(self._format_turn(conversation))
+            
+        return "\n\n".join(parts)
 
     def _generate_completion(
         self, 
@@ -147,8 +133,7 @@ class GoodfireLLM(LM):
                 "model": self.model,
                 "max_completion_tokens": self.max_completion_tokens,
                 "temperature": temperature,
-                "top_p": top_p,
-                "stop": None  # Let the task's YAML config handle stop sequences
+                "top_p": top_p
             }
             
             response = self.client.chat.completions.create(**api_params)
@@ -188,7 +173,7 @@ class GoodfireLLM(LM):
                     _debug_log_prompt(str(context), idx)
 
                     # Pass context as a single message
-                    messages = [{"role": "user", "content": str(context)}]
+                    messages = [{"role": "user", "content": str(context).strip()}]
 
                     # Generate completion
                     output = self._generate_completion(
