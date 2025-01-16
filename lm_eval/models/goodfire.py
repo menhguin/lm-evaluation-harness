@@ -81,16 +81,26 @@ class GoodfireLLM(LM):
     ) -> str:
         """Applies a chat template to a list of chat history between user and model."""
         self.chat_applied = True
-        # Format chat history into a single string
+        
+        # For single message, just return the content
+        if len(chat_history) == 1:
+            return chat_history[0]["content"]
+            
+        # For multiple messages, format based on role
         formatted_messages = []
         for msg in chat_history:
             if msg["role"] == "system":
-                formatted_messages.append(f"{msg['content']}")
+                # System messages provide context/instructions
+                formatted_messages.append(msg["content"])
             elif msg["role"] == "user":
-                formatted_messages.append(f"{msg['content']}")
+                # User messages contain the actual questions/problems
+                formatted_messages.append(msg["content"])
             elif msg["role"] == "assistant":
-                formatted_messages.append(f"{msg['content']}")
-        return "\n".join(formatted_messages)
+                # Assistant messages show example responses
+                formatted_messages.append(msg["content"])
+        
+        # Join with double newlines to clearly separate messages
+        return "\n\n".join(formatted_messages)
 
     def _generate_completion(
         self, 
@@ -145,8 +155,12 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Pass through context as single message
-                    messages = [{"role": "user", "content": context}]
+                    # Format messages based on whether chat template was applied
+                    if self.chat_applied:
+                        messages = [{"role": "user", "content": context}]
+                    else:
+                        # If no chat template, treat as raw prompt
+                        messages = [{"role": "user", "content": context}]
 
                     # Generate completion
                     output = self._generate_completion(
