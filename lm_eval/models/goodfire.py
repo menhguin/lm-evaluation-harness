@@ -62,7 +62,7 @@ class GoodfireLLM(LM):
         """
         if not _has_goodfire:
             raise ModuleNotFoundError(
-                "Package `goodfire` not found. Please install it via `pip install goodfire`"
+                'Package `goodfire` not found. Please install it via `pip install goodfire`'
             )
         super().__init__()
         self.api_key = api_key or get_goodfire_api_key()
@@ -84,6 +84,11 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
+            # For chat history, combine messages with newlines to maintain format
+            if len(messages) > 1:
+                combined_message = "\n".join(msg["content"] for msg in messages)
+                messages = [{"role": "user", "content": combined_message}]
+            
             api_params = {
                 "messages": messages,
                 "model": self.model,
