@@ -74,6 +74,15 @@ class GoodfireLLM(LM):
         self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
         self._max_length = 4096  # Default max length for context + completion
+        self.chat_applied = False
+
+    def apply_chat_template(
+        self, chat_history: List[Dict[str, str]], add_generation_prompt: bool = True
+    ) -> str:
+        """Applies a chat template to a list of chat history between user and model."""
+        self.chat_applied = True
+        # For Goodfire, we just pass through the raw chat history
+        return chat_history
 
     def _generate_completion(
         self, 
@@ -210,34 +219,3 @@ class GoodfireLLM(LM):
 
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Loglikelihood_rolling not supported for Goodfire models")
-
-    def apply_chat_template(
-        self, messages: List[Dict[str, str]], system_message: str = None
-    ) -> Union[str, List[Dict[str, str]]]:
-        """Apply chat template to format messages for the model.
-        
-        Args:
-            messages: List of message dictionaries with 'role' and 'content'
-            system_message: Optional system message to prepend
-        
-        Returns:
-            Either a string representation for hashing or the formatted messages for the API
-        """
-        formatted_messages = []
-        
-        # Add system message if provided
-        if system_message:
-            formatted_messages.append({
-                "role": "system",
-                "content": system_message
-            })
-        
-        # Add all other messages
-        formatted_messages.extend(messages)
-        
-        # For generate_until, return the messages list
-        if hasattr(self, '_is_generating') and self._is_generating:
-            return formatted_messages
-            
-        # For hashing and other purposes, return a string representation
-        return json.dumps(formatted_messages, sort_keys=True)
