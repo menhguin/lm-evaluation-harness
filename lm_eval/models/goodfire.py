@@ -81,8 +81,19 @@ class GoodfireLLM(LM):
     ) -> str:
         """Applies a chat template to a list of chat history between user and model."""
         self.chat_applied = True
-        # Pass through raw content without modification
-        return chat_history[0]["content"] if len(chat_history) == 1 else "\n".join(msg["content"] for msg in chat_history)
+        
+        # For single messages, just return the content
+        if len(chat_history) == 1:
+            return chat_history[0]["content"]
+            
+        # For fewshot examples, only take the last user message
+        # This prevents leakage of previous examples
+        last_user_msg = None
+        for msg in reversed(chat_history):
+            if msg["role"] == "user":
+                last_user_msg = msg["content"]
+                break
+        return last_user_msg if last_user_msg else chat_history[-1]["content"]
 
     def _generate_completion(
         self, 
@@ -93,6 +104,10 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
+            # Ensure we only send the last message to avoid context leakage
+            if len(messages) > 1:
+                messages = [messages[-1]]
+                
             api_params = {
                 "messages": messages,
                 "model": self.model,
