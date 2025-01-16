@@ -86,14 +86,25 @@ class GoodfireLLM(LM):
         if len(chat_history) == 1:
             return chat_history[0]["content"]
             
-        # For fewshot examples, only take the last user message
-        # This prevents leakage of previous examples
-        last_user_msg = None
-        for msg in reversed(chat_history):
-            if msg["role"] == "user":
-                last_user_msg = msg["content"]
-                break
-        return last_user_msg if last_user_msg else chat_history[-1]["content"]
+        # For fewshot examples, format as a clean sequence
+        formatted_messages = []
+        for msg in chat_history:
+            if msg["role"] == "system":
+                # System messages provide context/instructions
+                formatted_messages.append(msg["content"])
+            elif msg["role"] == "user":
+                # User messages contain questions
+                formatted_messages.append(msg["content"])
+            elif msg["role"] == "assistant":
+                # Assistant messages show example answers
+                formatted_messages.append(msg["content"])
+                formatted_messages.append("")  # Add blank line between examples
+                
+        # Remove trailing blank line if present
+        if formatted_messages and not formatted_messages[-1]:
+            formatted_messages.pop()
+            
+        return "\n".join(formatted_messages)
 
     def _generate_completion(
         self, 
@@ -152,7 +163,7 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Pass through raw context
+                    # Format as single message but preserve fewshot context
                     messages = [{"role": "user", "content": str(context)}]
 
                     # Generate completion
