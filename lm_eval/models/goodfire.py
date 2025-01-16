@@ -86,18 +86,30 @@ class GoodfireLLM(LM):
         if len(chat_history) == 1:
             return chat_history[0]["content"]
             
-        # For fewshot examples, format as a clean sequence
-        formatted_messages = []
+        # For multi-turn conversations, preserve the turn structure
+        formatted_parts = []
+        current_turn = []
+        
         for msg in chat_history:
-            if msg["role"] == "system":
-                formatted_messages.append(msg["content"])
-            elif msg["role"] == "user":
-                formatted_messages.append(msg["content"])
+            if msg["role"] == "user":
+                # Start a new turn
+                if current_turn:
+                    formatted_parts.append("\n\n".join(current_turn))
+                    current_turn = []
+                current_turn.append(msg["content"])
             elif msg["role"] == "assistant" and msg["content"]:
-                # Only include non-empty assistant messages
-                formatted_messages.append(msg["content"])
+                # Complete the turn
+                current_turn.append(msg["content"])
+            elif msg["role"] == "system":
+                # System messages go at the start
+                formatted_parts.insert(0, msg["content"])
                 
-        return "\n\n".join(formatted_messages)
+        # Add the last turn if any
+        if current_turn:
+            formatted_parts.append("\n\n".join(current_turn))
+            
+        # Join all parts with double newlines
+        return "\n\n".join(formatted_parts)
 
     def _generate_completion(
         self, 
