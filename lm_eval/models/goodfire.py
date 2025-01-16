@@ -90,21 +90,14 @@ class GoodfireLLM(LM):
         formatted_messages = []
         for msg in chat_history:
             if msg["role"] == "system":
-                # System messages provide context/instructions
                 formatted_messages.append(msg["content"])
             elif msg["role"] == "user":
-                # User messages contain questions
                 formatted_messages.append(msg["content"])
-            elif msg["role"] == "assistant":
-                # Assistant messages show example answers
+            elif msg["role"] == "assistant" and msg["content"]:
+                # Only include non-empty assistant messages
                 formatted_messages.append(msg["content"])
-                formatted_messages.append("")  # Add blank line between examples
                 
-        # Remove trailing blank line if present
-        if formatted_messages and not formatted_messages[-1]:
-            formatted_messages.pop()
-            
-        return "\n".join(formatted_messages)
+        return "\n\n".join(formatted_messages)
 
     def _generate_completion(
         self, 
@@ -115,10 +108,6 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
-            # Ensure we only send the last message to avoid context leakage
-            if len(messages) > 1:
-                messages = [messages[-1]]
-                
             api_params = {
                 "messages": messages,
                 "model": self.model,
@@ -163,7 +152,7 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Format as single message but preserve fewshot context
+                    # Format as single message with full context
                     messages = [{"role": "user", "content": str(context)}]
 
                     # Generate completion
