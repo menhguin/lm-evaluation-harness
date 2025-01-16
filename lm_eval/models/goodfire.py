@@ -84,11 +84,6 @@ class GoodfireLLM(LM):
     ) -> str:
         """Generate a single completion."""
         try:
-            # For chat history, combine messages with newlines to maintain format
-            if len(messages) > 1:
-                combined_message = "\n".join(msg["content"] for msg in messages)
-                messages = [{"role": "user", "content": combined_message}]
-            
             api_params = {
                 "messages": messages,
                 "model": self.model,
@@ -133,7 +128,7 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Prepare messages - just pass through as single user message
+                    # Pass through context as single message
                     messages = [{"role": "user", "content": context}]
 
                     # Generate completion
