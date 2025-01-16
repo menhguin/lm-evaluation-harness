@@ -81,8 +81,16 @@ class GoodfireLLM(LM):
     ) -> str:
         """Applies a chat template to a list of chat history between user and model."""
         self.chat_applied = True
-        # For Goodfire, we just pass through the raw chat history
-        return chat_history
+        # Format chat history into a single string
+        formatted_messages = []
+        for msg in chat_history:
+            if msg["role"] == "system":
+                formatted_messages.append(f"{msg['content']}")
+            elif msg["role"] == "user":
+                formatted_messages.append(f"{msg['content']}")
+            elif msg["role"] == "assistant":
+                formatted_messages.append(f"{msg['content']}")
+        return "\n".join(formatted_messages)
 
     def _generate_completion(
         self, 
