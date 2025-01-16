@@ -76,16 +76,6 @@ class GoodfireLLM(LM):
         self._max_length = 4096  # Default max length for context + completion
         self.chat_applied = False
 
-    def _format_message(self, msg: Dict[str, str]) -> str:
-        """Format a single message based on its role and content."""
-        if not msg.get("content"):
-            return ""
-        return msg["content"].strip()
-
-    def _format_turn(self, messages: List[str]) -> str:
-        """Format a conversation turn (one or more messages)."""
-        return "\n\n".join(msg for msg in messages if msg)
-
     def apply_chat_template(
         self, chat_history: List[Dict[str, str]], add_generation_prompt: bool = True
     ) -> str:
@@ -94,11 +84,32 @@ class GoodfireLLM(LM):
         
         # For single messages, just return the content
         if len(chat_history) == 1:
-            return chat_history[0]["content"].strip()
+            return chat_history[0]["content"]
             
-        # For fewshot examples, just concatenate with newlines
-        # This lets the task's YAML config handle formatting
-        return "\n\n".join(msg["content"].strip() for msg in chat_history if msg.get("content"))
+        # For multi-turn conversations, preserve the turn structure
+        formatted_parts = []
+        current_turn = []
+        
+        for msg in chat_history:
+            if msg["role"] == "user":
+                # Start a new turn
+                if current_turn:
+                    formatted_parts.append("\n\n".join(current_turn))
+                    current_turn = []
+                current_turn.append(msg["content"])
+            elif msg["role"] == "assistant" and msg["content"]:
+                # Complete the turn
+                current_turn.append(msg["content"])
+            elif msg["role"] == "system":
+                # System messages go at the start
+                formatted_parts.insert(0, msg["content"])
+                
+        # Add the last turn if any
+        if current_turn:
+            formatted_parts.append("\n\n".join(current_turn))
+            
+        # Join all parts with double newlines
+        return "\n\n".join(formatted_parts)
 
     def _generate_completion(
         self, 
@@ -120,7 +131,7 @@ class GoodfireLLM(LM):
             response = self.client.chat.completions.create(**api_params)
             output = response.choices[0].message['content']
             _debug_log_response(output, idx)
-            return output.strip()
+            return output
         except Exception as e:
             eval_logger.error(f"Error generating response #{idx + 1}: {str(e)}")
             return ""
@@ -153,8 +164,8 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Pass context as a single message
-                    messages = [{"role": "user", "content": str(context).strip()}]
+                    # Format as single message with full context
+                    messages = [{"role": "user", "content": str(context)}]
 
                     # Generate completion
                     output = self._generate_completion(
