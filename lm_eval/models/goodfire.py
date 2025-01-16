@@ -81,11 +81,8 @@ class GoodfireLLM(LM):
     ) -> str:
         """Applies a chat template to a list of chat history between user and model."""
         self.chat_applied = True
-        # Pass through raw content - let task's YAML handle formatting
-        if len(chat_history) == 1:
-            return chat_history[0]["content"]
-        # For multi-turn, concatenate with single newline
-        return "\n".join(msg["content"] for msg in chat_history)
+        # Pass through raw content without modification
+        return chat_history[0]["content"] if len(chat_history) == 1 else "\n".join(msg["content"] for msg in chat_history)
 
     def _generate_completion(
         self, 
@@ -140,8 +137,8 @@ class GoodfireLLM(LM):
                     # Log prompt
                     _debug_log_prompt(str(context), idx)
 
-                    # Pass through as single message
-                    messages = [{"role": "user", "content": context}]
+                    # Pass through raw context
+                    messages = [{"role": "user", "content": str(context)}]
 
                     # Generate completion
                     output = self._generate_completion(
